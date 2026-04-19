@@ -7,71 +7,55 @@ function ModifierSelectGroup({ title, options, onAddOption, onDeleteOption }) {
   const handleAdd = () => {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
-
     onAddOption(trimmed);
     setInputValue("");
   };
 
   const handleDelete = () => {
     if (!selectedOption) return;
-
     onDeleteOption(selectedOption);
     setSelectedOption("");
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleAdd();
-    }
   };
 
   return (
     <div style={styles.modifierBox}>
       <h3 style={styles.modifierTitle}>{title}</h3>
 
-      <div style={styles.fieldGroup}>
-        <label style={styles.label}>Add Option</label>
-        <div style={styles.inlineRow}>
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={`Type ${title.toLowerCase()} option`}
-            style={styles.input}
-          />
-          <button type="button" onClick={handleAdd} style={styles.darkButton}>
-            Add
-          </button>
-        </div>
+      <div style={styles.inlineRow}>
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          placeholder={`Type ${title.toLowerCase()} option`}
+          style={styles.input}
+        />
+        <button type="button" onClick={handleAdd} style={styles.darkButton}>
+          Add
+        </button>
       </div>
 
-      <div style={styles.fieldGroup}>
-        <label style={styles.label}>Delete Option</label>
-        <div style={styles.inlineRow}>
-          <select
-            value={selectedOption}
-            onChange={(e) => setSelectedOption(e.target.value)}
-            style={styles.input}
-          >
-            <option value="">Select option</option>
-            {options.map((option, index) => (
-              <option key={`${option}-${index}`} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
+      <div style={styles.inlineRow}>
+        <select
+          value={selectedOption}
+          onChange={(e) => setSelectedOption(e.target.value)}
+          style={styles.input}
+        >
+          <option value="">Select option</option>
+          {options.map((option, index) => (
+            <option key={`${option}-${index}`} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
 
-          <button
-            type="button"
-            onClick={handleDelete}
-            style={styles.deleteButton}
-            disabled={!selectedOption}
-          >
-            Delete
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleDelete}
+          style={styles.deleteButton}
+          disabled={!selectedOption}
+        >
+          Delete
+        </button>
       </div>
 
       <div style={styles.previewList}>
@@ -89,6 +73,75 @@ function ModifierSelectGroup({ title, options, onAddOption, onDeleteOption }) {
   );
 }
 
+function SwitchPairGroup({ pairs, onAddPair, onDeletePair }) {
+  const [fromValue, setFromValue] = useState("");
+  const [toValue, setToValue] = useState("");
+
+  const handleAdd = () => {
+    const from = fromValue.trim();
+    const to = toValue.trim();
+
+    if (!from || !to) return;
+
+    onAddPair({ from, to });
+    setFromValue("");
+    setToValue("");
+  };
+
+  return (
+    <div style={styles.modifierBox}>
+      <h3 style={styles.modifierTitle}>Switch</h3>
+
+      <div style={styles.switchAddRow}>
+        <input
+          value={fromValue}
+          onChange={(e) => setFromValue(e.target.value)}
+          placeholder="Type switch from option"
+          style={styles.input}
+        />
+
+        <div style={styles.toText}>To</div>
+
+        <input
+          value={toValue}
+          onChange={(e) => setToValue(e.target.value)}
+          placeholder="Type switch to option"
+          style={styles.input}
+        />
+
+        <button type="button" onClick={handleAdd} style={styles.darkButton}>
+          Add
+        </button>
+      </div>
+
+      <div style={styles.switchPairsWrap}>
+        {pairs.length === 0 ? (
+          <p style={styles.emptyText}>No switch options yet.</p>
+        ) : (
+          pairs.map((pair, index) => (
+            <div
+              key={`${pair.from}-${pair.to}-${index}`}
+              style={styles.switchPairChip}
+            >
+              <button
+                type="button"
+                onClick={() => onDeletePair(index)}
+                style={styles.switchPairDelete}
+              >
+                ×
+              </button>
+
+              <span style={styles.switchPairText}>{pair.from}</span>
+              <span style={styles.switchPairTo}>To</span>
+              <span style={styles.switchPairText}>{pair.to}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MenuItemForm({
   categories,
   formData,
@@ -98,11 +151,13 @@ function MenuItemForm({
   isEditing,
   onAddModifierOption,
   onDeleteModifierOption,
+  onAddSwitchPair,
+  onDeleteSwitchPair,
 }) {
   const modifiers = formData.modifiers || {
     addOptions: [],
     noOptions: [],
-    switchOptions: [],
+    switchPairs: [],
   };
 
   return (
@@ -169,13 +224,10 @@ function MenuItemForm({
             }
           />
 
-          <ModifierSelectGroup
-            title="Switch to"
-            options={modifiers.switchOptions}
-            onAddOption={(value) => onAddModifierOption("switchOptions", value)}
-            onDeleteOption={(value) =>
-              onDeleteModifierOption("switchOptions", value)
-            }
+          <SwitchPairGroup
+            pairs={modifiers.switchPairs || []}
+            onAddPair={onAddSwitchPair}
+            onDeletePair={onDeleteSwitchPair}
           />
 
           <div style={styles.fieldGroup}>
@@ -325,14 +377,75 @@ const styles = {
   },
   previewList: {
     display: "flex",
-    flexDirection: "column",
+    flexWrap: "wrap",
     gap: "8px",
   },
   previewItem: {
+    display: "inline-flex",
+    alignItems: "center",
     padding: "10px 12px",
     border: "1px solid #e5e7eb",
-    borderRadius: "10px",
+    borderRadius: "999px",
     background: "#fff",
+    width: "fit-content",
+    whiteSpace: "nowrap",
+  },
+  switchAddRow: {
+    display: "grid",
+    gridTemplateColumns: "1fr auto 1fr auto",
+    gap: "12px",
+    alignItems: "center",
+  },
+  switchPairsWrap: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px",
+  },
+  switchPairChip: {
+    position: "relative",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "14px 32px 10px 12px",
+    border: "1px solid #e5e7eb",
+    borderRadius: "14px",
+    background: "#fff",
+    width: "fit-content",
+    whiteSpace: "nowrap",
+  },
+  switchPairDelete: {
+    position: "absolute",
+    top: "6px",
+    right: "6px",
+    width: "18px",
+    height: "18px",
+    border: "none",
+    borderRadius: "999px",
+    background: "#ef4444",
+    color: "#fff",
+    fontSize: "12px",
+    lineHeight: 1,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+  },
+  switchPairText: {
+    fontSize: "14px",
+    fontWeight: 500,
+  },
+  switchPairTo: {
+    fontSize: "14px",
+    fontWeight: 700,
+    color: "#374151",
+  },
+  toText: {
+  fontWeight: 700,
+  fontSize: "15px",
+  color: "#170f11",
+  textAlign: "center",
+  whiteSpace: "nowrap",
   },
   emptyText: {
     margin: 0,

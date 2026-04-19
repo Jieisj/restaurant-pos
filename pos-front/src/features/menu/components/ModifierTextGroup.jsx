@@ -104,7 +104,7 @@ const styles = {
   },
   options: {
     display: "flex",
-    flexDirection: "column",
+    flexWrap: "wrap",
     gap: "8px",
   },
   empty: {
@@ -113,19 +113,23 @@ const styles = {
   },
   optionRow: {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    padding: "10px 12px",
+    gap: "8px",
+    padding: "8px 12px",
     border: "1px solid #e5e7eb",
-    borderRadius: "10px",
+    borderRadius: "999px",
+    background: "#fff",
+    width: "fit-content",
+    whiteSpace: "nowrap",
   },
   deleteButton: {
     border: "none",
-    borderRadius: "8px",
+    borderRadius: "999px",
     background: "#dc2626",
     color: "#fff",
-    padding: "8px 12px",
+    padding: "6px 10px",
     cursor: "pointer",
+    fontSize: "12px",
   },
 };
 

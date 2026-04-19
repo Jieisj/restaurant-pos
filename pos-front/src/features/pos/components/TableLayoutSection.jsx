@@ -1,38 +1,62 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+function cloneTables(tables = []) {
+  return (tables || []).map((table) => ({ ...table }));
+}
 
 function TableLayoutSection({
   tables = [],
-  onAddTable,
-  onDeleteTable,
-  onRenameTable,
-  onChangeTableSeats,
-  onChangeTableStatus,
-  onUpdateTablePosition,
+  onSaveTablesChanges,
   selectedTableId,
 }) {
   const floorRef = useRef(null);
 
+  const [draftTables, setDraftTables] = useState(() => cloneTables(tables));
   const [newTableName, setNewTableName] = useState("");
   const [newSeats, setNewSeats] = useState(4);
-
   const [draggingId, setDraggingId] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    setDraftTables(cloneTables(tables));
+  }, [tables]);
+
+  const hasUnsavedChanges = useMemo(() => {
+    return JSON.stringify(draftTables) !== JSON.stringify(tables || []);
+  }, [draftTables, tables]);
+
+  const updateDraftTable = (tableId, updater) => {
+    setDraftTables((prev) =>
+      prev.map((table) => {
+        if (table.id !== tableId) return table;
+        const nextTable = typeof updater === "function" ? updater(table) : updater;
+        return nextTable;
+      })
+    );
+  };
 
   const handleAddTable = () => {
     const trimmedName = newTableName.trim();
     if (!trimmedName) return;
 
-    onAddTable({
-      id: Date.now(),
-      name: trimmedName,
-      seats: Number(newSeats) || 1,
-      status: "available",
-      x: 40,
-      y: 40,
-    });
+    setDraftTables((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        name: trimmedName,
+        seats: Number(newSeats) || 1,
+        status: "available",
+        x: 40,
+        y: 40,
+      },
+    ]);
 
     setNewTableName("");
     setNewSeats(4);
+  };
+
+  const handleSaveChanges = () => {
+    onSaveTablesChanges?.(cloneTables(draftTables));
   };
 
   const handleMouseDown = (event, table) => {
@@ -58,7 +82,11 @@ function TableLayoutSection({
     const clampedX = Math.max(0, Math.min(nextX, floorRect.width - 120));
     const clampedY = Math.max(0, Math.min(nextY, floorRect.height - 120));
 
-    onUpdateTablePosition(draggingId, clampedX, clampedY);
+    updateDraftTable(draggingId, (table) => ({
+      ...table,
+      x: clampedX,
+      y: clampedY,
+    }));
   };
 
   const handleMouseUp = () => {
@@ -94,6 +122,18 @@ function TableLayoutSection({
         <button type="button" onClick={handleAddTable} style={styles.addButton}>
           Add Table
         </button>
+
+        <button
+          type="button"
+          onClick={handleSaveChanges}
+          style={{
+            ...styles.saveButton,
+            ...(hasUnsavedChanges ? {} : styles.saveButtonDisabled),
+          }}
+          disabled={!hasUnsavedChanges}
+        >
+          Save Changes
+        </button>
       </div>
 
       <div
@@ -103,7 +143,7 @@ function TableLayoutSection({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
       >
-        {(tables || []).map((table) => (
+        {draftTables.map((table) => (
           <div
             key={table.id}
             style={{
@@ -127,7 +167,12 @@ function TableLayoutSection({
 
             <input
               value={table.name}
-              onChange={(e) => onRenameTable(table.id, e.target.value)}
+              onChange={(e) =>
+                updateDraftTable(table.id, (prev) => ({
+                  ...prev,
+                  name: e.target.value,
+                }))
+              }
               style={styles.nameInput}
             />
 
@@ -139,7 +184,10 @@ function TableLayoutSection({
                   min="1"
                   value={table.seats}
                   onChange={(e) =>
-                    onChangeTableSeats(table.id, Number(e.target.value) || 1)
+                    updateDraftTable(table.id, (prev) => ({
+                      ...prev,
+                      seats: Number(e.target.value) || 1,
+                    }))
                   }
                   style={styles.metaInput}
                 />
@@ -149,7 +197,12 @@ function TableLayoutSection({
                 Status
                 <select
                   value={table.status}
-                  onChange={(e) => onChangeTableStatus(table.id, e.target.value)}
+                  onChange={(e) =>
+                    updateDraftTable(table.id, (prev) => ({
+                      ...prev,
+                      status: e.target.value,
+                    }))
+                  }
                   style={styles.metaInput}
                 >
                   <option value="available">available</option>
@@ -161,7 +214,9 @@ function TableLayoutSection({
 
             <button
               type="button"
-              onClick={() => onDeleteTable(table.id)}
+              onClick={() =>
+                setDraftTables((prev) => prev.filter((entry) => entry.id !== table.id))
+              }
               style={styles.deleteButton}
             >
               Delete
@@ -217,6 +272,19 @@ const styles = {
     padding: "12px 16px",
     cursor: "pointer",
     fontWeight: 600,
+  },
+  saveButton: {
+    border: "1px solid #d1d5db",
+    borderRadius: "10px",
+    background: "#ffffff",
+    color: "#111827",
+    padding: "12px 16px",
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  saveButtonDisabled: {
+    opacity: 0.55,
+    cursor: "not-allowed",
   },
   floor: {
     position: "relative",

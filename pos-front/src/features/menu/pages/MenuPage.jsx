@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ROLES } from "../../../constants/roles";
 import MenuGrid from "../components/MenuGrid";
 import MenuItemForm from "../components/MenuItemForm";
 import CategoryManager from "../components/CategoryManager";
+import WaiterModifierModal from "../components/WaiterModifierModal";
 
 const initialCategories = [
   { id: 1, name: "Burgers" },
@@ -20,7 +21,7 @@ const initialItems = [
     modifiers: {
       addOptions: ["Cheese", "Bacon"],
       noOptions: ["Onion", "Pickles"],
-      switchOptions: ["Salad"],
+      switchPairs: [{ from: "Fries", to: "Salad" }],
     },
   },
   {
@@ -32,7 +33,7 @@ const initialItems = [
     modifiers: {
       addOptions: ["Egg"],
       noOptions: ["Tomato"],
-      switchOptions: ["Coleslaw"],
+      switchPairs: [{ from: "Fries", to: "Coleslaw" }],
     },
   },
   {
@@ -44,7 +45,7 @@ const initialItems = [
     modifiers: {
       addOptions: ["Ice"],
       noOptions: ["Sugar"],
-      switchOptions: ["Large Size"],
+      switchPairs: [{ from: "Medium", to: "Large" }],
     },
   },
   {
@@ -56,7 +57,7 @@ const initialItems = [
     modifiers: {
       addOptions: ["Ice Cream"],
       noOptions: ["Chocolate Syrup"],
-      switchOptions: ["Vanilla Cake"],
+      switchPairs: [{ from: "Chocolate Syrup", to: "Caramel Syrup" }],
     },
   },
 ];
@@ -69,14 +70,166 @@ const createEmptyForm = () => ({
   modifiers: {
     addOptions: [],
     noOptions: [],
-    switchOptions: [],
+    switchPairs: [],
   },
 });
 
-function MenuPage({ role, selectedTableId }) {
-  const isAdmin = role === ROLES.ADMIN;
-  const isCustomer = role === ROLES.CUSTOMER;
+const createEmptyCustomerInfo = (orderType = "to-go") => ({
+  orderType,
+  phoneNumber: "",
+  customerName: "",
+  address: "",
+  note: "",
+});
 
+function CustomerInfoModal({ formData, onChange, onSave, onClose }) {
+  if (!formData) return null;
+
+  const isDelivery = formData.orderType === "delivery";
+
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.customerModal}>
+        <div style={styles.customerModalHeader}>
+          <div>
+            <h2 style={styles.customerModalTitle}>
+              {isDelivery ? "Delivery Customer Info" : "To-Go Customer Info"}
+            </h2>
+            <p style={styles.customerModalSubtitle}>
+              Fill in customer details before ordering.
+            </p>
+          </div>
+
+          <button type="button" onClick={onClose} style={styles.closeButton}>
+            ×
+          </button>
+        </div>
+
+        <div style={styles.customerFormGrid}>
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>Phone Number</label>
+            <input
+              name="phoneNumber"
+              value={formData.phoneNumber}
+              onChange={onChange}
+              placeholder="Enter phone number"
+              style={styles.input}
+            />
+          </div>
+
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>Name</label>
+            <input
+              name="customerName"
+              value={formData.customerName}
+              onChange={onChange}
+              placeholder="Enter customer name"
+              style={styles.input}
+            />
+          </div>
+
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>Address</label>
+            <input
+              name="address"
+              value={formData.address}
+              onChange={onChange}
+              placeholder="Enter address"
+              style={styles.input}
+            />
+          </div>
+
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>Note</label>
+            <textarea
+              name="note"
+              value={formData.note}
+              onChange={onChange}
+              placeholder="Enter note"
+              style={styles.textarea}
+            />
+          </div>
+        </div>
+
+        <div style={styles.customerModalFooter}>
+          <button type="button" onClick={onSave} style={styles.primaryButton}>
+            Save
+          </button>
+
+          <button type="button" style={styles.secondaryButton}>
+            History
+          </button>
+
+          <button type="button" onClick={onClose} style={styles.returnButton}>
+            Return
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChooseOrderTypeModal({
+  onClose,
+  onChooseDining,
+  onChooseToGo,
+  onChooseDelivery,
+}) {
+  return (
+    <div style={styles.overlay}>
+      <div style={styles.chooseTypeModal}>
+        <div style={styles.chooseTypeHeader}>
+          <h2 style={styles.chooseTypeTitle}>Choose Order Type</h2>
+          <button type="button" onClick={onClose} style={styles.closeButton}>
+            ×
+          </button>
+        </div>
+
+        <div style={styles.chooseTypeButtonWrap}>
+          <button
+            type="button"
+            onClick={onChooseDining}
+            style={styles.typeChoiceButton}
+          >
+            Dining
+          </button>
+
+          <button
+            type="button"
+            onClick={onChooseToGo}
+            style={styles.typeChoiceButton}
+          >
+            To-Go
+          </button>
+
+          <button
+            type="button"
+            onClick={onChooseDelivery}
+            style={styles.typeChoiceButton}
+          >
+            Delivery
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MenuPage({
+  role,
+  selectedTableId,
+  activeServiceMode = "dining",
+  activeCustomerOrder = null,
+  onAddToCart,
+  onOpenDining,
+  onStartDiningSelection,
+  onCustomerInfoSave,
+  onCreateCustomerOrderAndAddItem,
+}) {
+  const isAdmin = role === ROLES.ADMIN;
+  const isWaiter = role === ROLES.WAITER;
+
+  const [modifierModalItem, setModifierModalItem] = useState(null);
   const [categories, setCategories] = useState(initialCategories);
   const [items, setItems] = useState(initialItems);
   const [selectedCategoryId, setSelectedCategoryId] = useState("all");
@@ -86,17 +239,40 @@ function MenuPage({ role, selectedTableId }) {
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState(createEmptyForm());
 
-  const filteredItems = useMemo(() => {
-    if (selectedCategoryId === "all") {
-      return items;
-    }
+  const [showCustomerInfoModal, setShowCustomerInfoModal] = useState(false);
+  const [customerInfo, setCustomerInfo] = useState(
+    createEmptyCustomerInfo("to-go")
+  );
 
+  const [showChooseTypeModal, setShowChooseTypeModal] = useState(false);
+  const [queuedItemForTypeChoice, setQueuedItemForTypeChoice] = useState(null);
+
+  const [showFloatingActions, setShowFloatingActions] = useState(false);
+  const floatingRef = useRef(null);
+
+  useEffect(() => {
+    if (!showFloatingActions) return;
+
+    const handleClickOutside = (event) => {
+      if (!floatingRef.current) return;
+      if (!floatingRef.current.contains(event.target)) {
+        setShowFloatingActions(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showFloatingActions]);
+
+  const filteredItems = useMemo(() => {
+    if (selectedCategoryId === "all") return items;
     return items.filter((item) => item.categoryId === selectedCategoryId);
   }, [items, selectedCategoryId]);
 
-  const getCategoryName = (categoryId) => {
-    return categories.find((category) => category.id === categoryId)?.name || "Unknown";
-  };
+  const getCategoryName = (categoryId) =>
+    categories.find((category) => category.id === categoryId)?.name || "Unknown";
 
   const openAddForm = () => {
     setEditingItem(null);
@@ -114,7 +290,7 @@ function MenuPage({ role, selectedTableId }) {
       modifiers: {
         addOptions: item.modifiers?.addOptions || [],
         noOptions: item.modifiers?.noOptions || [],
-        switchOptions: item.modifiers?.switchOptions || [],
+        switchPairs: item.modifiers?.switchPairs || [],
       },
     });
     setShowItemForm(true);
@@ -171,6 +347,43 @@ function MenuPage({ role, selectedTableId }) {
     }));
   };
 
+  const handleAddSwitchPair = (pair) => {
+    const from = pair.from.trim();
+    const to = pair.to.trim();
+
+    if (!from || !to) return;
+
+    setFormData((prev) => {
+      const exists = prev.modifiers.switchPairs.some(
+        (item) =>
+          item.from.toLowerCase() === from.toLowerCase() &&
+          item.to.toLowerCase() === to.toLowerCase()
+      );
+
+      if (exists) return prev;
+
+      return {
+        ...prev,
+        modifiers: {
+          ...prev.modifiers,
+          switchPairs: [...prev.modifiers.switchPairs, { from, to }],
+        },
+      };
+    });
+  };
+
+  const handleDeleteSwitchPair = (indexToDelete) => {
+    setFormData((prev) => ({
+      ...prev,
+      modifiers: {
+        ...prev.modifiers,
+        switchPairs: prev.modifiers.switchPairs.filter(
+          (_, index) => index !== indexToDelete
+        ),
+      },
+    }));
+  };
+
   const handleSubmitItem = (e) => {
     e.preventDefault();
 
@@ -186,28 +399,18 @@ function MenuPage({ role, selectedTableId }) {
       modifiers: {
         addOptions: formData.modifiers.addOptions,
         noOptions: formData.modifiers.noOptions,
-        switchOptions: formData.modifiers.switchOptions,
+        switchPairs: formData.modifiers.switchPairs,
       },
     };
 
     if (editingItem) {
       setItems((prev) =>
         prev.map((item) =>
-          item.id === editingItem.id
-            ? {
-                ...item,
-                ...payload,
-              }
-            : item
+          item.id === editingItem.id ? { ...item, ...payload } : item
         )
       );
     } else {
-      const newItem = {
-        id: Date.now(),
-        ...payload,
-      };
-
-      setItems((prev) => [...prev, newItem]);
+      setItems((prev) => [...prev, { id: Date.now(), ...payload }]);
     }
 
     closeItemForm();
@@ -233,12 +436,7 @@ function MenuPage({ role, selectedTableId }) {
       return;
     }
 
-    const newCategory = {
-      id: Date.now(),
-      name: trimmed,
-    };
-
-    setCategories((prev) => [...prev, newCategory]);
+    setCategories((prev) => [...prev, { id: Date.now(), name: trimmed }]);
   };
 
   const handleDeleteCategory = (categoryId) => {
@@ -255,7 +453,9 @@ function MenuPage({ role, selectedTableId }) {
 
     if (!confirmed) return;
 
-    setCategories((prev) => prev.filter((category) => category.id !== categoryId));
+    setCategories((prev) =>
+      prev.filter((category) => category.id !== categoryId)
+    );
     setItems((prev) => prev.filter((item) => item.categoryId !== categoryId));
 
     if (selectedCategoryId === categoryId) {
@@ -263,45 +463,138 @@ function MenuPage({ role, selectedTableId }) {
     }
   };
 
-  const handleAddToCart = (item) => {
-    alert(
-      selectedTableId
-        ? `Add "${item.name}" to Table ${selectedTableId}`
-        : `Add "${item.name}" to cart`
-    );
+  const handleToggleCategory = (categoryId) => {
+    if (selectedCategoryId === categoryId) {
+      setSelectedCategoryId("all");
+      return;
+    }
+    setSelectedCategoryId(categoryId);
+  };
+
+  const openCustomerInfoModal = (orderType) => {
+    setCustomerInfo(createEmptyCustomerInfo(orderType));
+    setShowCustomerInfoModal(true);
+    setShowFloatingActions(false);
+    setShowChooseTypeModal(false);
+  };
+
+  const handleCustomerInfoChange = (e) => {
+    const { name, value } = e.target;
+    setCustomerInfo((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const handleSaveCustomerInfo = () => {
+    const payload = {
+      ...customerInfo,
+      phoneNumber: customerInfo.phoneNumber.trim(),
+      customerName: customerInfo.customerName.trim(),
+      address: customerInfo.address.trim(),
+      note: customerInfo.note.trim(),
+    };
+
+    if (queuedItemForTypeChoice) {
+      onCreateCustomerOrderAndAddItem?.(payload, queuedItemForTypeChoice);
+      setQueuedItemForTypeChoice(null);
+    } else {
+      onCustomerInfoSave?.(payload);
+    }
+
+    setShowCustomerInfoModal(false);
+  };
+
+  const normalizeOrderItem = (item) => ({
+    ...item,
+    quantity: item.quantity || 1,
+    selectedModifiers: item.selectedModifiers || {
+      add: [],
+      no: [],
+      switchPair: null,
+    },
+  });
+
+  const hasActiveContext =
+    !!selectedTableId ||
+    (activeServiceMode !== "dining" && !!activeCustomerOrder);
+
+  const handleAddToOrder = (item) => {
+    const normalizedItem = normalizeOrderItem(item);
+
+    if (hasActiveContext) {
+      onAddToCart?.(normalizedItem);
+      return;
+    }
+
+    setQueuedItemForTypeChoice(normalizedItem);
+    setShowChooseTypeModal(true);
+  };
+
+  const handleOpenSettings = (item) => {
+    setModifierModalItem(item);
+  };
+
+  const handleConfirmModifierOrder = (itemWithSelections) => {
+    const normalizedItem = normalizeOrderItem(itemWithSelections);
+
+    if (hasActiveContext) {
+      onAddToCart?.(normalizedItem);
+      setModifierModalItem(null);
+      return;
+    }
+
+    setQueuedItemForTypeChoice(normalizedItem);
+    setModifierModalItem(null);
+    setShowChooseTypeModal(true);
+  };
+
+  const handleChooseDiningFromNew = () => {
+    setShowFloatingActions(false);
+    onOpenDining?.();
+  };
+
+  const handleChooseDiningForQueuedItem = () => {
+    if (!queuedItemForTypeChoice) return;
+    onStartDiningSelection?.(queuedItemForTypeChoice);
+    setQueuedItemForTypeChoice(null);
+    setShowChooseTypeModal(false);
+  };
+
+  const handleChooseToGoForQueuedItem = () => {
+    if (!queuedItemForTypeChoice) return;
+    setCustomerInfo(createEmptyCustomerInfo("to-go"));
+    setShowCustomerInfoModal(true);
+    setShowChooseTypeModal(false);
+  };
+
+  const handleChooseDeliveryForQueuedItem = () => {
+    if (!queuedItemForTypeChoice) return;
+    setCustomerInfo(createEmptyCustomerInfo("delivery"));
+    setShowCustomerInfoModal(true);
+    setShowChooseTypeModal(false);
   };
 
   return (
     <div style={styles.page}>
-      <div style={styles.header}>
-        <div>
-          <h1 style={styles.title}>Menu</h1>
-          <p style={styles.subtitle}>
-            {isAdmin
-              ? "Manage food items, categories, and modifiers."
-              : isCustomer
-              ? "Browse the menu and review items before adding to cart."
-              : "Browse menu items."}
-          </p>
+      {isAdmin && (
+        <div style={styles.headerActions}>
+          <button type="button" style={styles.primaryButton} onClick={openAddForm}>
+            Add Item
+          </button>
+          <button
+            type="button"
+            style={styles.secondaryButton}
+            onClick={() => setShowCategoryManager(true)}
+          >
+            Manage Categories
+          </button>
         </div>
-
-        {isAdmin && (
-          <div style={styles.headerActions}>
-            <button style={styles.primaryButton} onClick={openAddForm}>
-              Add Item
-            </button>
-            <button
-              style={styles.secondaryButton}
-              onClick={() => setShowCategoryManager(true)}
-            >
-              Manage Categories
-            </button>
-          </div>
-        )}
-      </div>
+      )}
 
       <div style={styles.categoryBar}>
         <button
+          type="button"
           style={{
             ...styles.categoryButton,
             ...(selectedCategoryId === "all" ? styles.categoryButtonActive : {}),
@@ -314,29 +607,72 @@ function MenuPage({ role, selectedTableId }) {
         {categories.map((category) => (
           <button
             key={category.id}
+            type="button"
             style={{
               ...styles.categoryButton,
               ...(selectedCategoryId === category.id
                 ? styles.categoryButtonActive
                 : {}),
             }}
-            onClick={() => setSelectedCategoryId(category.id)}
+            onClick={() => handleToggleCategory(category.id)}
           >
             {category.name}
           </button>
         ))}
       </div>
 
-      <MenuGrid
-        items={filteredItems}
-        isAdmin={isAdmin}
-        getCategoryName={getCategoryName}
-        onEditItem={openEditForm}
-        onDeleteItem={handleDeleteItem}
-        onAddToOrder={handleAddToCart}
-      />
+        <MenuGrid
+          items={filteredItems}
+          isAdmin={isAdmin}
+          getCategoryName={getCategoryName}
+          onEditItem={openEditForm}
+          onDeleteItem={handleDeleteItem}
+          onAddToOrder={handleAddToOrder}
+          onOpenSettings={handleOpenSettings}
+          onOpenWaiterCustomize={handleOpenSettings}
+        />
 
-      {isAdmin && showItemForm && (
+      {isWaiter && (
+        <div style={styles.floatingWrap} ref={floatingRef}>
+          {showFloatingActions && (
+            <div style={styles.floatingBar}>
+              <button
+                type="button"
+                style={styles.floatingActionButton}
+                onClick={handleChooseDiningFromNew}
+              >
+                Dining
+              </button>
+
+              <button
+                type="button"
+                style={styles.floatingActionButton}
+                onClick={() => openCustomerInfoModal("to-go")}
+              >
+                To-Go
+              </button>
+
+              <button
+                type="button"
+                style={styles.floatingActionButtonNoBorder}
+                onClick={() => openCustomerInfoModal("delivery")}
+              >
+                Delivery
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            style={styles.floatingNewButton}
+            onClick={() => setShowFloatingActions((prev) => !prev)}
+          >
+            New
+          </button>
+        </div>
+      )}
+
+      {showItemForm && (
         <MenuItemForm
           categories={categories}
           formData={formData}
@@ -346,6 +682,8 @@ function MenuPage({ role, selectedTableId }) {
           isEditing={!!editingItem}
           onAddModifierOption={handleAddModifierOption}
           onDeleteModifierOption={handleDeleteModifierOption}
+          onAddSwitchPair={handleAddSwitchPair}
+          onDeleteSwitchPair={handleDeleteSwitchPair}
         />
       )}
 
@@ -355,6 +693,38 @@ function MenuPage({ role, selectedTableId }) {
           onAddCategory={handleAddCategory}
           onDeleteCategory={handleDeleteCategory}
           onClose={() => setShowCategoryManager(false)}
+        />
+      )}
+
+      {modifierModalItem && (
+        <WaiterModifierModal
+          item={modifierModalItem}
+          onClose={() => setModifierModalItem(null)}
+          onConfirm={handleConfirmModifierOrder}
+        />
+      )}
+
+      {showCustomerInfoModal && (
+        <CustomerInfoModal
+          formData={customerInfo}
+          onChange={handleCustomerInfoChange}
+          onSave={handleSaveCustomerInfo}
+          onClose={() => {
+            setShowCustomerInfoModal(false);
+            setQueuedItemForTypeChoice(null);
+          }}
+        />
+      )}
+
+      {showChooseTypeModal && (
+        <ChooseOrderTypeModal
+          onClose={() => {
+            setShowChooseTypeModal(false);
+            setQueuedItemForTypeChoice(null);
+          }}
+          onChooseDining={handleChooseDiningForQueuedItem}
+          onChooseToGo={handleChooseToGoForQueuedItem}
+          onChooseDelivery={handleChooseDeliveryForQueuedItem}
         />
       )}
     </div>
@@ -367,51 +737,94 @@ const styles = {
     padding: "24px",
     background: "#f7f7f8",
   },
-  header: {
+  headerCard: {
+    background: "#ffffff",
+    border: "1px solid #e5e7eb",
+    borderRadius: "18px",
+    padding: "20px",
+    marginBottom: "20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px",
+  },
+  headerTopRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
     gap: "16px",
-    flexWrap: "wrap",
-    marginBottom: "20px",
   },
-  title: {
+  headerLeftBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+  },
+  headerRightBlock: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+  },
+  tableInfo: {
     margin: 0,
-    fontSize: "28px",
+    fontSize: "18px",
+    fontWeight: 700,
     color: "#111827",
   },
-  subtitle: {
-    margin: "6px 0 0",
-    color: "#6b7280",
+  typeSelect: {
+    minWidth: "140px",
+    padding: "12px 16px",
+    borderRadius: "12px",
+    border: "1px solid #d1d5db",
+    background: "#ffffff",
+    color: "#111827",
+    fontWeight: 600,
+    fontSize: "14px",
+    cursor: "pointer",
+    outline: "none",
   },
   headerActions: {
     display: "flex",
     gap: "12px",
     flexWrap: "wrap",
+    justifyContent: "center",
+    marginTop: "4px",
+    marginBottom: "20px",
   },
   primaryButton: {
     border: "none",
-    borderRadius: "10px",
+    borderRadius: "12px",
     background: "#111827",
     color: "#fff",
-    padding: "10px 14px",
+    padding: "12px 18px",
     cursor: "pointer",
     fontWeight: 600,
+    minWidth: "110px",
   },
   secondaryButton: {
     border: "1px solid #d1d5db",
-    borderRadius: "10px",
+    borderRadius: "12px",
     background: "#fff",
     color: "#111827",
-    padding: "10px 14px",
+    padding: "12px 18px",
     cursor: "pointer",
     fontWeight: 600,
+    minWidth: "110px",
+  },
+  returnButton: {
+    border: "1px solid #d1d5db",
+    borderRadius: "12px",
+    background: "#f9fafb",
+    color: "#111827",
+    padding: "12px 18px",
+    cursor: "pointer",
+    fontWeight: 600,
+    minWidth: "110px",
   },
   categoryBar: {
     display: "flex",
     gap: "10px",
     flexWrap: "wrap",
     marginBottom: "20px",
+    justifyContent: "center",
   },
   categoryButton: {
     border: "1px solid #d1d5db",
@@ -426,6 +839,182 @@ const styles = {
     background: "#111827",
     color: "#fff",
     border: "1px solid #111827",
+  },
+  floatingWrap: {
+    position: "fixed",
+    right: "24px",
+    bottom: "24px",
+    zIndex: 1200,
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+  },
+  floatingBar: {
+    display: "flex",
+    alignItems: "center",
+    background: "#ffffff",
+    border: "1px solid #d1d5db",
+    borderRadius: "16px",
+    overflow: "hidden",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.12)",
+  },
+  floatingActionButton: {
+    border: "none",
+    borderRight: "1px solid #e5e7eb",
+    background: "#ffffff",
+    color: "#111827",
+    padding: "14px 18px",
+    cursor: "pointer",
+    fontWeight: 700,
+    minWidth: "96px",
+  },
+  floatingActionButtonNoBorder: {
+    border: "none",
+    background: "#ffffff",
+    color: "#111827",
+    padding: "14px 18px",
+    cursor: "pointer",
+    fontWeight: 700,
+    minWidth: "96px",
+  },
+  floatingNewButton: {
+    border: "none",
+    borderRadius: "999px",
+    background: "#111827",
+    color: "#fff",
+    width: "72px",
+    height: "72px",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "16px",
+    boxShadow: "0 16px 30px rgba(17,24,39,0.28)",
+  },
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.35)",
+    display: "grid",
+    placeItems: "center",
+    padding: "20px",
+    zIndex: 1300,
+  },
+  chooseTypeModal: {
+    width: "100%",
+    maxWidth: "520px",
+    background: "#fff",
+    borderRadius: "18px",
+    padding: "24px",
+    boxShadow: "0 20px 50px rgba(0,0,0,0.15)",
+    display: "flex",
+    flexDirection: "column",
+    gap: "20px",
+  },
+  chooseTypeHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+  },
+  chooseTypeTitle: {
+    margin: 0,
+    fontSize: "28px",
+    color: "#111827",
+  },
+  chooseTypeButtonWrap: {
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    gap: "12px",
+  },
+  typeChoiceButton: {
+    border: "none",
+    borderRadius: "14px",
+    background: "#111827",
+    color: "#fff",
+    padding: "16px 18px",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: "16px",
+  },
+  customerModal: {
+    width: "100%",
+    maxWidth: "720px",
+    background: "#fff",
+    borderRadius: "18px",
+    padding: "24px",
+    boxShadow: "0 20px 50px rgba(0,0,0,0.15)",
+    display: "flex",
+    flexDirection: "column",
+    gap: "20px",
+  },
+  customerModalHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+  },
+  customerModalTitle: {
+    margin: 0,
+    fontSize: "28px",
+    color: "#111827",
+  },
+  customerModalSubtitle: {
+    margin: "8px 0 0",
+    color: "#6b7280",
+  },
+  closeButton: {
+    width: "44px",
+    height: "44px",
+    border: "none",
+    borderRadius: "999px",
+    background: "#f3f4f6",
+    fontSize: "26px",
+    lineHeight: 1,
+    cursor: "pointer",
+  },
+  customerFormGrid: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "16px",
+  },
+  fieldGroup: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+  },
+  label: {
+    fontSize: "14px",
+    fontWeight: 600,
+    color: "#374151",
+    textAlign: "left",
+  },
+  input: {
+    padding: "14px 16px",
+    borderRadius: "12px",
+    border: "1px solid #d1d5db",
+    width: "100%",
+    background: "#fff",
+    minHeight: "48px",
+    boxSizing: "border-box",
+    fontSize: "15px",
+  },
+  textarea: {
+    minHeight: "140px",
+    resize: "vertical",
+    padding: "14px 16px",
+    borderRadius: "12px",
+    border: "1px solid #d1d5db",
+    width: "100%",
+    fontFamily: "inherit",
+    fontSize: "15px",
+    boxSizing: "border-box",
+  },
+  customerModalFooter: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: "12px",
+    flexWrap: "wrap",
+    borderTop: "1px solid #e5e7eb",
+    paddingTop: "20px",
   },
 };
 

@@ -7,6 +7,8 @@ function MenuGrid({
   onEditItem,
   onDeleteItem,
   onAddToOrder,
+  onOpenSettings,
+  onOpenWaiterCustomize,
 }) {
   if (!items.length) {
     return <p>No menu items found.</p>;
@@ -23,6 +25,8 @@ function MenuGrid({
           onEdit={() => onEditItem(item)}
           onDelete={() => onDeleteItem(item)}
           onAddToOrder={() => onAddToOrder(item)}
+          onOpenSettings={() => onOpenSettings(item)}
+          onOpenWaiterCustomize={() => onOpenWaiterCustomize(item)}
         />
       ))}
     </div>

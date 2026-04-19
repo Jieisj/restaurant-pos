@@ -1,34 +1,71 @@
-function TablesSection({ tables, onOpenTable, selectedTableId }) {
+function TablesSection({
+  tables,
+  onOpenTable,
+  selectedTableId,
+  disabledTableIds = [],
+  selectionMode = "normal",
+  onCancelAssignDining,
+}) {
+  const disabledSet = new Set(disabledTableIds);
+
   return (
     <div style={styles.wrapper}>
       <div style={styles.header}>
-        <h2 style={styles.title}>Tables</h2>
-        <p style={styles.subtitle}>
-          Select a table to open its cart.
-        </p>
+        <div>
+          <h2 style={styles.title}>Tables</h2>
+          <p style={styles.subtitle}>
+            {selectionMode === "assign-dining"
+              ? "Select an available table to assign this order. Occupied tables are locked."
+              : "Select a table to open its cart."}
+          </p>
+        </div>
+
+        {selectionMode === "assign-dining" && (
+          <button
+            type="button"
+            onClick={onCancelAssignDining}
+            style={styles.cancelButton}
+          >
+            Cancel
+          </button>
+        )}
       </div>
 
       <div style={styles.floor}>
-        {tables.map((table) => (
-          <button
-            key={table.id}
-            type="button"
-            onClick={() => onOpenTable(table.id)}
-            style={{
-              ...styles.tableCard,
-              left: table.x,
-              top: table.y,
-              ...(selectedTableId === table.id ? styles.selectedTable : {}),
-              ...(table.status === "available" ? styles.available : {}),
-              ...(table.status === "occupied" ? styles.occupied : {}),
-              ...(table.status === "reserved" ? styles.reserved : {}),
-            }}
-          >
-            <strong>{table.name}</strong>
-            <span>{table.seats} seats</span>
-            <span style={styles.statusText}>{table.status}</span>
-          </button>
-        ))}
+        {tables.map((table) => {
+          const isDisabled = disabledSet.has(table.id);
+
+          return (
+            <button
+              key={table.id}
+              type="button"
+              disabled={isDisabled}
+              onClick={() => {
+                if (isDisabled) return;
+                onOpenTable(table.id);
+              }}
+              style={{
+                ...styles.tableCard,
+                left: table.x,
+                top: table.y,
+                ...(selectedTableId === table.id ? styles.selectedTable : {}),
+                ...(table.status === "available" ? styles.available : {}),
+                ...(table.status === "occupied" ? styles.occupied : {}),
+                ...(table.status === "reserved" ? styles.reserved : {}),
+                ...(isDisabled ? styles.disabledTable : {}),
+              }}
+              title={
+                isDisabled
+                  ? `${table.name} already has an active order`
+                  : `Open ${table.name}`
+              }
+            >
+              <strong>{table.name}</strong>
+              <span>{table.seats} seats</span>
+              <span style={styles.statusText}>{table.status}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -43,6 +80,10 @@ const styles = {
   },
   header: {
     marginBottom: "20px",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "16px",
   },
   title: {
     margin: 0,
@@ -51,6 +92,16 @@ const styles = {
   subtitle: {
     margin: "6px 0 0",
     color: "#6b7280",
+  },
+  cancelButton: {
+    border: "1px solid #d1d5db",
+    background: "#ffffff",
+    color: "#111827",
+    padding: "12px 16px",
+    borderRadius: "12px",
+    cursor: "pointer",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
   },
   floor: {
     position: "relative",
@@ -73,6 +124,7 @@ const styles = {
     alignItems: "flex-start",
     cursor: "pointer",
     textAlign: "left",
+    transition: "all 0.18s ease",
   },
   selectedTable: {
     border: "2px solid #111827",
@@ -85,6 +137,14 @@ const styles = {
   },
   reserved: {
     background: "#fef3c7",
+  },
+  disabledTable: {
+    background: "#e5e7eb",
+    color: "#6b7280",
+    cursor: "not-allowed",
+    opacity: 0.85,
+    boxShadow: "none",
+    filter: "grayscale(0.3)",
   },
   statusText: {
     textTransform: "capitalize",
