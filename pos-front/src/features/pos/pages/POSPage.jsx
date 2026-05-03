@@ -11,7 +11,7 @@ import ReportSection from "../components/ReportSection";
 const mockUser = {
   id: 1,
   name: "Alex Waiter",
-  role: ROLES.WAITER,
+  role: ROLES.ADMIN,
 };
 
 const initialTables = [
