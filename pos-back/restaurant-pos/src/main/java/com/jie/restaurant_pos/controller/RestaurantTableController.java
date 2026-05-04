@@ -2,20 +2,18 @@ package com.jie.restaurant_pos.controller;
 
 import com.jie.restaurant_pos.entity.RestaurantTable;
 import com.jie.restaurant_pos.service.RestaurantTableService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
 @RestController
-@RequestMapping(name = "/api/table")
+@RequestMapping("/api/table")
 @CrossOrigin
+@RequiredArgsConstructor
 public class RestaurantTableController {
-    public RestaurantTableService service;
-
-    public RestaurantTableController(RestaurantTableService service) {
-        this.service = service;
-    }
+    private final RestaurantTableService service;
 
     @GetMapping
     public List<RestaurantTable> getAllTables() {

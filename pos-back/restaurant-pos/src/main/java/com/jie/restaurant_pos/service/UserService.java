@@ -1,31 +1,26 @@
 package com.jie.restaurant_pos.service;
 
+import com.jie.restaurant_pos.dto.CreateUserRequest;
 import com.jie.restaurant_pos.dto.LoginRequest;
 import com.jie.restaurant_pos.entity.User;
 import com.jie.restaurant_pos.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class UserService {
     private final UserRepository repository;
-    private BCryptPasswordEncoder passwordEncoder;
-    private AuthService authService;
+    private final BCryptPasswordEncoder passwordEncoder;
 
-    public User createUser(User user) {
-        String hashedPassword = passwordEncoder.encode(user.getPasswordHash());
+    public User createUser(CreateUserRequest createUserRequest) {
+        String hashedPassword = passwordEncoder.encode(createUserRequest.getPassword());
+        User user = new User();
+        user.setUsername(createUserRequest.getUsername());
         user.setPasswordHash(hashedPassword);
+        user.setRole(createUserRequest.getRole());
         return repository.save(user);
-    }
-
-    public List<User> getAllUser(){
-        return  repository.findAll();
     }
 
     public void deleteUserById(Long id) {

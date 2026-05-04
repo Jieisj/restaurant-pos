@@ -15,6 +15,7 @@ import java.util.List;
 public class MenuItemController {
     private final MenuItemService service;
 
+    @GetMapping
     public List<MenuItem> getAllMenuItem(){
         return service.getAllMenuItem();
     }

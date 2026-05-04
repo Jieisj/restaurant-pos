@@ -1,17 +1,16 @@
 package com.jie.restaurant_pos.service;
 
+import com.jie.restaurant_pos.entity.Customer;
 import com.jie.restaurant_pos.entity.Order;
 import com.jie.restaurant_pos.entity.RestaurantTable;
-import com.jie.restaurant_pos.enums.OrderStatus;
-import com.jie.restaurant_pos.enums.OrderType;
-import com.jie.restaurant_pos.enums.PaymentStatus;
-import com.jie.restaurant_pos.enums.TableStatus;
+import com.jie.restaurant_pos.enums.*;
+import com.jie.restaurant_pos.repository.CustomerRepository;
 import com.jie.restaurant_pos.repository.OrderRepository;
 import com.jie.restaurant_pos.repository.RestaurantTableRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -21,11 +20,16 @@ import java.util.List;
 public class OrderService {
     private final OrderRepository repository;
     private final RestaurantTableRepository tableRepository;
+    private final CustomerRepository customerRepository;
 
     public Order getCurrentOrderByTableId(Long tableId) {
         return repository
                 .findByTableIdAndOrderStatus(tableId, OrderStatus.SERVING)
                 .orElseThrow(() -> new RuntimeException("No current order for this table"));
+    }
+
+    public Order getOrderById(Long id){
+        return repository.findById(id).orElseThrow(() -> new RuntimeException("Order Not Found"));
     }
 
     public List<Order> getOrders(LocalDate date, OrderStatus status, OrderType type) {
@@ -47,37 +51,111 @@ public class OrderService {
         return repository.findByCreatedAtBetween(start, end);
     }
 
-    public Order openTableOrder(Long tableId) {
-        RestaurantTable table = tableRepository.findById(tableId)
-                .orElseThrow(() -> new RuntimeException("Table not found"));
+    public Order updateOrder(Long id, Order updatedOrder) {
+        Order order = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Order not found"));
 
-        if (table.getTableStatus() == TableStatus.OCCUPIED) {
-            return repository.findByTableIdAndOrderStatus(tableId, OrderStatus.SERVING)
-                    .orElseThrow(() -> new RuntimeException("No current order for occupied table"));
+
+        /*
+            setting the customer when there is none for the existing order
+            json input:
+             ----> id (optional, none for creation of new customer)
+             ----> name (optional)
+             ----> address (optional)
+             ----> phoneNumber (optional)
+             ----> note (optional)
+         */
+
+        if (updatedOrder.getCustomer() != null) {
+            Customer customer = order.getCustomer();
+
+            if (customer == null) {
+                customer = new Customer();
+            }
+
+            customer.setName(updatedOrder.getCustomer().getName());
+            customer.setAddress(updatedOrder.getCustomer().getAddress());
+            customer.setPhoneNumber(updatedOrder.getCustomer().getPhoneNumber());
+            customer.setNote(updatedOrder.getCustomer().getNote());
+
+            Customer savedCustomer = customerRepository.save(customer);
+            order.setCustomer(savedCustomer);
         }
 
-        if (table.getTableStatus() == TableStatus.AVAILABLE ||
-                table.getTableStatus() == TableStatus.RESERVED) {
+        /*
+            table logic, switching or no changing
+            json input:
+             ----> id (required, updated table id for switch table only to available one)
+         */
 
-            Order order = new Order();
-            order.setTable(order.getTable());
-            order.setOrderStatus(OrderStatus.SERVING);
-            order.setPaymentStatus(PaymentStatus.UNPAID);
-            order.setOrderType(OrderType.DINING);
-            order.setSubtotal(BigDecimal.ZERO);
-            order.setTips(BigDecimal.ZERO);
-            order.setTax(BigDecimal.ZERO);
-            order.setTotal(BigDecimal.ZERO);
-            order.setCreatedAt(LocalDateTime.now());
-            order.setUpdatedAt(LocalDateTime.now());
+        if (updatedOrder.getTable() != null) {
+            Long newTableId = updatedOrder.getTable().getId();
 
-            table.setTableStatus(TableStatus.OCCUPIED);
-            tableRepository.save(table);
+            RestaurantTable newTable = tableRepository.findById(newTableId)
+                    .orElseThrow(() -> new RuntimeException("Table not found"));
 
-            return repository.save(order);
+            if (newTable.getTableStatus() == TableStatus.OCCUPIED) {
+                throw new RuntimeException("Cannot move order to an occupied table");
+            }
+
+            if (order.getTable() != null) {
+                RestaurantTable oldTable = order.getTable();
+                oldTable.setTableStatus(TableStatus.AVAILABLE);
+                tableRepository.save(oldTable);
+            }
+
+            newTable.setTableStatus(TableStatus.OCCUPIED);
+            tableRepository.save(newTable);
+
+            order.setTable(newTable);
         }
 
-        throw new RuntimeException("Table cannot be opened");
+        /*/ All are optional
+            ---> HandlerNameSnapshot
+            ---> UsernameSnapshot
+            ---> OrderType
+            ---> OrderStatus
+            ---> PaymentStatus
+            ---> TransactionMethod
+            ---> HandlerNameSnapshot
+            ---> HandlerNameSnapshot
+            ---> Subtotal
+            ---> Tips
+            ---> Tax
+            ---> Total
+            ---> UpdatedAt
+         */
+
+        order.setHandlerNameSnapshot(updatedOrder.getHandlerNameSnapshot());
+        order.setUsernameSnapshot(updatedOrder.getUsernameSnapshot());
+        order.setOrderType(updatedOrder.getOrderType());
+        order.setOrderStatus(updatedOrder.getOrderStatus());
+        order.setPaymentStatus(updatedOrder.getPaymentStatus());
+        order.setTransactionMethod(updatedOrder.getTransactionMethod());
+        order.setCardType(updatedOrder.getCardType());
+
+        order.setSubtotal(updatedOrder.getSubtotal());
+        order.setTips(updatedOrder.getTips());
+        order.setTax(updatedOrder.getTax());
+        order.setTotal(updatedOrder.getTotal());
+
+        order.setUpdatedAt(LocalDateTime.now());
+
+        return repository.save(order);
     }
 
+    public ResponseEntity<Void> deleteOrder(Long id) {
+        Order order = repository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Order not found"));
+
+        if (order.getTable() != null) {
+            RestaurantTable table = order.getTable();
+            table.setTableStatus(TableStatus.AVAILABLE);
+            tableRepository.save(table);
+        }
+
+        repository.delete(order);
+
+        return ResponseEntity.noContent().build();
+    }
 }

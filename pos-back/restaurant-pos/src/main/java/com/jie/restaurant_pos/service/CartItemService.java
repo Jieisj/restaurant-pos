@@ -1,67 +1,92 @@
 package com.jie.restaurant_pos.service;
 
 import com.jie.restaurant_pos.entity.CartItem;
+import com.jie.restaurant_pos.entity.MenuItem;
 import com.jie.restaurant_pos.repository.CartItemRepository;
+import com.jie.restaurant_pos.repository.MenuItemRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class CartItemService {
-    private final CartItemRepository repository;
+    private final CartItemRepository cartItemRepository;
+    private final MenuItemRepository menuItemRepository;
 
-    public List<CartItem> getItemsByOrderId(Long orderId) {
-        return repository.findByOrderId(orderId);
+    public List<CartItem> getAllCartItems() {
+        return cartItemRepository.findAll();
     }
 
-    public List<CartItem> getPendingItemsByOrderId(Long orderId) {
-        return repository.findByOrderIdAndIsPending(orderId, (byte) 1);
+    public List<CartItem> getCartItemsByOrderId(Long orderId) {
+        return cartItemRepository.findByOrderId(orderId);
     }
 
-    public List<CartItem> getNotPendingItemsByOrderId(Long orderId) {
-        return repository.findByOrderIdAndIsPending(orderId, (byte) 0);
+    public CartItem getCartItemById(Long id) {
+        return cartItemRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Cart item not found: " + id));
     }
 
-    public List<CartItem> getFinishedItemsByOrderId(Long orderId) {
-        return repository.findByOrderIdAndIsFinished(orderId, (byte) 1);
+    public CartItem createCartItem(CartItem cartItem) {
+        MenuItem menuItem = menuItemRepository.findById(cartItem.getMenuItemId())
+                .orElseThrow(() -> new RuntimeException("Menu item not found"));
+
+        cartItem.setNameSnapshot(menuItem.getName());
+        cartItem.setPriceSnapshot(menuItem.getPrice());
+
+        cartItem.setIsPending((byte) 1);
+        cartItem.setIsFinished((byte) 0);
+
+        cartItem.setCreatedAt(LocalDateTime.now());
+
+        return cartItemRepository.save(cartItem);
     }
 
-    public List<CartItem> getNotFinishedItemsByOrderId(Long orderId) {
-        return repository.findByOrderIdAndIsFinished(orderId, (byte) 0);
-    }
-
-
-    public CartItem addCartItem(CartItem cartItem) {
-        return repository.save(cartItem);
-    }
-
-    public CartItem updateCartItem(Long id, CartItem updatedItem) {
-        CartItem item = repository.findById(id)
+    public CartItem updateCartItem(Long id, CartItem updated) {
+        CartItem item = cartItemRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cart item not found"));
 
-        item.setQuantity(updatedItem.getQuantity());
-        item.setNameSnapshot(updatedItem.getNameSnapshot());
-        item.setPriceSnapshot(updatedItem.getPriceSnapshot());
-        item.setIsPending(updatedItem.getIsPending());
-        item.setIsFinished(updatedItem.getIsFinished());
-        item.setSentAt(updatedItem.getSentAt());
-        item.setFinishedAt(updatedItem.getFinishedAt());
+        if (updated.getQuantity() != null) {
+            item.setQuantity(updated.getQuantity());
+        }
 
-        return repository.save(item);
+        if (updated.getNameSnapshot() != null) {
+            item.setNameSnapshot(updated.getNameSnapshot());
+        }
+
+        if (updated.getPriceSnapshot() != null) {
+            item.setPriceSnapshot(updated.getPriceSnapshot());
+        }
+
+        if (updated.getIsPending() != null) {
+            item.setIsPending(updated.getIsPending());
+        }
+
+        if (updated.getIsFinished() != null) {
+            item.setIsFinished(updated.getIsFinished());
+        }
+
+        return cartItemRepository.save(item);
+    }
+
+    public CartItem sendCartItem(Long id) {
+        CartItem item = getCartItemById(id);
+        item.setIsPending((byte) 0);
+        item.setSentAt(LocalDateTime.now());
+        return cartItemRepository.save(item);
+    }
+
+    public CartItem finishCartItem(Long id) {
+        CartItem item = getCartItemById(id);
+        item.setIsFinished((byte) 1);
+        item.setIsPending((byte) 0);
+        item.setFinishedAt(LocalDateTime.now());
+        return cartItemRepository.save(item);
     }
 
     public void deleteCartItem(Long id) {
-        repository.deleteById(id);
+        cartItemRepository.deleteById(id);
     }
-
-    public void deletePendingItemsByOrderId(Long orderId) {
-        repository.deleteByOrderIdAndIsPending(orderId, (byte) 1);
-    }
-
-    public void deleteNotPendingItemsByOrderId(Long orderId) {
-        repository.deleteByOrderIdAndIsPendingIsNot(orderId, (byte) 0);
-    }
-
 }

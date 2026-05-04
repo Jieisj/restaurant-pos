@@ -12,36 +12,26 @@ import java.util.List;
 @CrossOrigin
 @RequiredArgsConstructor
 public class CartItemController {
-    public CartItemService service;
+    private final CartItemService cartItemService;
+
+    @GetMapping
+    public List<CartItem> getAllCartItems() {
+        return cartItemService.getAllCartItems();
+    }
+
+    @GetMapping("/{id}")
+    public CartItem getCartItemById(@PathVariable Long id) {
+        return cartItemService.getCartItemById(id);
+    }
 
     @GetMapping("/order/{orderId}")
-    public List<CartItem> getItemsByOrderId(@PathVariable Long orderId) {
-        return service.getItemsByOrderId(orderId);
-    }
-
-    @GetMapping("/order/{orderId}/pending")
-    public List<CartItem> getPendingItemsByOrderId(@PathVariable Long orderId) {
-        return service.getPendingItemsByOrderId(orderId);
-    }
-
-    @GetMapping("/order/{orderId}/not-pending")
-    public List<CartItem> getNotPendingItemsByOrderId(@PathVariable Long orderId) {
-        return service.getNotPendingItemsByOrderId(orderId);
-    }
-
-    @GetMapping("/order/{orderId}/finished")
-    public List<CartItem> getFinishedItemsByOrderId(@PathVariable Long orderId) {
-        return service.getFinishedItemsByOrderId(orderId);
-    }
-
-    @GetMapping("/order/{orderId}/not-finished")
-    public List<CartItem> getNotFinishedItemsByOrderId(@PathVariable Long orderId) {
-        return service.getNotFinishedItemsByOrderId(orderId);
+    public List<CartItem> getCartItemsByOrderId(@PathVariable Long orderId) {
+        return cartItemService.getCartItemsByOrderId(orderId);
     }
 
     @PostMapping
-    public CartItem addCartItem(@RequestBody CartItem cartItem) {
-        return service.addCartItem(cartItem);
+    public CartItem createCartItem(@RequestBody CartItem cartItem) {
+        return cartItemService.createCartItem(cartItem);
     }
 
     @PutMapping("/{id}")
@@ -49,21 +39,21 @@ public class CartItemController {
             @PathVariable Long id,
             @RequestBody CartItem cartItem
     ) {
-        return service.updateCartItem(id, cartItem);
+        return cartItemService.updateCartItem(id, cartItem);
+    }
+
+    @PutMapping("/{id}/send")
+    public CartItem sendCartItem(@PathVariable Long id) {
+        return cartItemService.sendCartItem(id);
+    }
+
+    @PutMapping("/{id}/finish")
+    public CartItem finishCartItem(@PathVariable Long id) {
+        return cartItemService.finishCartItem(id);
     }
 
     @DeleteMapping("/{id}")
     public void deleteCartItem(@PathVariable Long id) {
-        service.deleteCartItem(id);
-    }
-
-    @DeleteMapping("/order/{orderId}/pending")
-    public void deletePendingItemsByOrderId(@PathVariable Long orderId) {
-        service.deletePendingItemsByOrderId(orderId);
-    }
-
-    @DeleteMapping("/order/{orderId}/not-pending")
-    public void deleteNotPendingItemsByOrderId(@PathVariable Long orderId) {
-        service.deleteNotPendingItemsByOrderId(orderId);
+        cartItemService.deleteCartItem(id);
     }
 }

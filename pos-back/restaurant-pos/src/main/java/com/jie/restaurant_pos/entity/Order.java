@@ -43,6 +43,7 @@ public class Order {
     @Enumerated(EnumType.STRING)
     private CardType cardType;
 
+    @Column(insertable = false)
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -51,9 +52,8 @@ public class Order {
     private RestaurantTable table;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<CartItem> cartItems = new ArrayList<>();
+    private List<CartItem> cartItems;
 
-    @JsonIgnore
     @ManyToOne(optional = true)
     @JoinColumn(name = "customer_id", nullable = true)
     private Customer customer;

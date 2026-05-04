@@ -1,5 +1,6 @@
 package com.jie.restaurant_pos.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.jie.restaurant_pos.enums.Role;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -20,10 +21,12 @@ public class User {
 
     private String username;
 
+    @Column(name = "password_hash")
     private String passwordHash;
 
     @Enumerated(EnumType.STRING)
     private Role role;
 
+    @Column(insertable = false)
     private LocalDateTime createdAt;
 }

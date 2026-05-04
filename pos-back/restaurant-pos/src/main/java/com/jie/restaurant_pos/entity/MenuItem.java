@@ -32,6 +32,7 @@ public class MenuItem {
 
     private Byte isAvailable;
 
+    @Column(insertable = false)
     private LocalDateTime createdAt;
 
     private LocalDateTime updatedAt;

@@ -1,34 +1,30 @@
 package com.jie.restaurant_pos.controller;
 
+import com.jie.restaurant_pos.dto.CreateUserRequest;
 import com.jie.restaurant_pos.dto.LoginRequest;
 import com.jie.restaurant_pos.entity.User;
 import com.jie.restaurant_pos.service.AuthService;
 import com.jie.restaurant_pos.service.UserService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/api/user")
 @CrossOrigin
+@RequiredArgsConstructor
 public class UserController {
-    public UserService service;
-    public AuthService authService;
-
-    public List<User> getAllUser(){
-        return service.getAllUser();
-    }
+    private final UserService service;
+    private final AuthService authService;
 
     @PostMapping("/login")
     public User login(@RequestBody LoginRequest request) {
         return authService.login(request);
     }
 
-
     @PostMapping
-    public ResponseEntity<User> createUser(@RequestBody User user){
-        return ResponseEntity.ok(service.createUser(user));
+    public ResponseEntity<User> createUser(@RequestBody CreateUserRequest createUserRequest){
+        return ResponseEntity.ok(service.createUser(createUserRequest));
     }
 
     @DeleteMapping("/{id}")
@@ -37,7 +33,7 @@ public class UserController {
         return ResponseEntity.noContent().build();
     }
 
-    @PutMapping
+    @PutMapping("/{id}")
     public ResponseEntity<User> updateUser(@PathVariable Long id, @RequestBody User updatedUser){
         User user = service.updateUser(id, updatedUser);
         return ResponseEntity.ok(user);

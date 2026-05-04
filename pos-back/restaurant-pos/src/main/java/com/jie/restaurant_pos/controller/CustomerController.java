@@ -11,7 +11,7 @@ import java.util.List;
 @RequestMapping("/api/customer")
 @RequiredArgsConstructor
 public class CustomerController {
-    public CustomerService service;
+    private final CustomerService service;
 
     @GetMapping
     public List<Customer> getAllCustomers() {
@@ -33,8 +33,8 @@ public class CustomerController {
         return service.getCustomerByName(name);
     }
 
-    @GetMapping("/address")
-    public Customer getCustomerByAddress(@RequestParam String address) {
+    @GetMapping("/address/{address}")
+    public Customer getCustomerByAddress(@PathVariable String address) {
         return service.getCustomerByAddress(address);
     }
 

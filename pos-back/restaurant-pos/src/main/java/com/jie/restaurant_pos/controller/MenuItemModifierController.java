@@ -1,5 +1,6 @@
 package com.jie.restaurant_pos.controller;
 
+import com.jie.restaurant_pos.dto.MenuItemModifierRequest;
 import com.jie.restaurant_pos.entity.MenuItemModifier;
 import com.jie.restaurant_pos.enums.ModifierType;
 import com.jie.restaurant_pos.service.MenuItemModifierService;
@@ -39,16 +40,16 @@ public class MenuItemModifierController {
     }
 
     @PostMapping
-    public MenuItemModifier addModifier(@RequestBody MenuItemModifier modifier) {
-        return service.addModifier(modifier);
+    public MenuItemModifier addModifier(@RequestBody MenuItemModifierRequest request) {
+        return service.addModifier(request);
     }
 
     @PutMapping("/{id}")
     public MenuItemModifier updateModifier(
             @PathVariable Long id,
-            @RequestBody MenuItemModifier modifier
+            @RequestBody MenuItemModifierRequest request
     ) {
-        return service.updateModifier(id, modifier);
+        return service.updateModifier(id, request);
     }
 
     @DeleteMapping("/{id}")
@@ -56,7 +57,7 @@ public class MenuItemModifierController {
         service.deleteModifier(id);
     }
 
-    @DeleteMapping("/menu-item/{menuItemId}")
+    @DeleteMapping("/menuItem/{menuItemId}")
     public void deleteModifiersByMenuItemId(@PathVariable Long menuItemId) {
         service.deleteModifiersByMenuItemId(menuItemId);
     }
