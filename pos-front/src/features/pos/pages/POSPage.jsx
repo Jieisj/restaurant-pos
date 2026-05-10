@@ -1,1757 +1,1126 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ROLES } from "../../../constants/roles";
-import MenuPage from "../../menu/pages/MenuPage";
-import CartSection from "../components/CartSection";
+import { getAllMenuItems } from "../../../api/menuApi";
+import { getAllTables, getTableById, updateTable } from "../../../api/tableApi";
+import {
+  getAllNotFinishedItems,
+  getNotFinishedItemsByOrder,
+  finishCartItem,
+  revertFinishedCartItem,
+} from "../../../api/cartApi";
+import {
+  addCartItemNote,
+  addCartItem,
+  deleteCartItemNote,
+  getCartItemsByOrder,
+  sendCartItem,
+  updateCartItem,
+  updateCartItemNote,
+  deleteCartItem,
+} from "../../../api/cartApi";
+import {
+  closeTableOrder,
+  openTableOrder,
+  checkoutOrder,
+  getOrderById,
+} from "../../../api/orderApi";
+import { assignCustomerToTable, getCustomerUsers } from "../../../api/userApi";
+
 import TablesSection from "../components/TablesSection";
-import TableLayoutSection from "../components/TableLayoutSection";
+import MenuSection from "../components/MenuSection";
+import CartSection from "../components/CartSection";
 import KitchenSection from "../components/KitchenSection";
-import OrderSection from "../components/OrderSection";
+import OrdersSection from "../components/OrdersSection";
 import ReportSection from "../components/ReportSection";
 
-const mockUser = {
-  id: 1,
-  name: "Alex Waiter",
-  role: ROLES.ADMIN,
-};
-
-const initialTables = [
-  { id: 1, name: "Table 1", seats: 4, status: "occupied", x: 40, y: 40 },
-  { id: 2, name: "Table 2", seats: 2, status: "occupied", x: 220, y: 60 },
-  { id: 3, name: "Table 3", seats: 6, status: "reserved", x: 120, y: 180 },
-];
-
 const TAX_RATE = 0.1;
-const NOTE_WORD_LIMIT = 15;
 
-function roundToTwo(value) {
-  return Math.round((Number(value) || 0) * 100) / 100;
+function defaultTabForRole(role) {
+  if (role === ROLES.CUSTOMER) return "tables";
+  if (role === ROLES.KITCHEN) return "kitchen";
+  return "tables";
 }
 
-function clampNoteWords(value = "") {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return "";
-  return trimmed.split(/\s+/).slice(0, NOTE_WORD_LIMIT).join(" ");
+function itemPrice(item) {
+  return Number(item.priceSnapshot ?? item.price ?? 0);
 }
 
-function calculateOrderFinancials(dishes = [], taxRate = TAX_RATE) {
-  const itemsCount = dishes.reduce((sum, dish) => sum + (dish.quantity || 0), 0);
-  const subtotal = roundToTwo(
-    dishes.reduce(
-      (sum, dish) => sum + (Number(dish.price) || 0) * (dish.quantity || 0),
-      0
-    )
+function itemName(item) {
+  return item.nameSnapshot || item.name || "Menu item";
+}
+
+function itemNotesTotal(item) {
+  return (item.notes || []).reduce(
+    (sum, note) => sum + Number(note.price || 0),
+    0,
   );
-  const tax = roundToTwo(subtotal * taxRate);
-  const total = roundToTwo(subtotal + tax);
-
-  return {
-    itemsCount,
-    subtotal,
-    tax,
-    total,
-  };
 }
 
-function hydrateOrder(order) {
-  const summary = calculateOrderFinancials(order?.dishes || []);
+function modifierCartNotes(selectedModifiers = {}) {
+  const notes = [];
 
-  return {
-    ...order,
-    customerName: order?.customerName || "",
-    phoneNumber: order?.phoneNumber || "",
-    address: order?.address || "",
-    note: clampNoteWords(order?.note || ""),
-    payment: order?.payment || "unpaid",
-    cardType:
-      (order?.payment || "unpaid") === "card"
-        ? order?.cardType || "visa"
-        : "none",
-    tips: roundToTwo(order?.tips || 0),
-    subtotal: summary.subtotal,
-    tax: summary.tax,
-    total: summary.total,
-    itemsCount: summary.itemsCount,
-  };
+  (selectedModifiers.add || []).forEach((name) => {
+    notes.push({ note: `Add ${name}`, price: 0 });
+  });
+
+  (selectedModifiers.no || []).forEach((name) => {
+    notes.push({ note: `No ${name}`, price: 0 });
+  });
+
+  if (selectedModifiers.switchTo) {
+    notes.push({ note: `Switch ${selectedModifiers.switchTo}`, price: 0 });
+  }
+
+  return notes;
 }
 
-
-function getNowParts() {
-  const now = new Date();
-
-  return {
-    now,
-    iso: now.toISOString(),
-    date: now.toISOString().slice(0, 10),
-    time: now.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }),
-  };
-}
-
-function createDishTimestampFields(overrides = {}) {
-  const { iso, date, time } = getNowParts();
-
-  return {
-    addedAt: overrides.addedAt ?? iso,
-    addedDate: overrides.addedDate ?? date,
-    addedTime: overrides.addedTime ?? time,
-    sentAt: overrides.sentAt ?? null,
-    sentDate: overrides.sentDate ?? null,
-    sentTime: overrides.sentTime ?? null,
-  };
-}
-
-function POSPage() {
-  const role = mockUser.role;
-
-  const isAdmin = role === ROLES.ADMIN;
-  const isWaiter = role === ROLES.WAITER;
-  const isCashier = role === ROLES.CASHIER;
-  const isKitchen = role === ROLES.KITCHEN;
+function POSPage({ user, onLogout }) {
+  const USER_ID = Number(user?.userId || sessionStorage.getItem("userId"));
+  const role = user?.role;
   const isCustomer = role === ROLES.CUSTOMER;
+  const isKitchen = role === ROLES.KITCHEN;
+  const isAdmin = role === ROLES.ADMIN;
+  const customerTableId = Number(user?.tableId || 0) || null;
+  const customerTableLabel = user?.tableLabel || null;
+  const customerTableSeat = Number(user?.tableSeat || 0) || null;
 
-  const isWaiterLike = isWaiter || isCashier;
-
-  const defaultSection = useMemo(() => {
-    if (isAdmin) return "table-layout";
-    if (isKitchen) return "kitchen";
-    if (isWaiterLike) return "tables";
-    if (isCustomer) return "menu";
-    return "menu";
-  }, [isAdmin, isKitchen, isWaiterLike, isCustomer]);
-
-  const [activeSection, setActiveSection] = useState(defaultSection);
+  const [activeTab, setActiveTab] = useState(defaultTabForRole(role));
+  const [tables, setTables] = useState([]);
+  const [menuItems, setMenuItems] = useState([]);
   const [selectedTableId, setSelectedTableId] = useState(null);
-  const [tables, setTables] = useState(initialTables);
+  const [activeOrder, setActiveOrder] = useState(null);
+  const [cartItems, setCartItems] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState("CASH");
+  const [tips, setTips] = useState(0);
+  const [kitchenItems, setKitchenItems] = useState([]);
+  const [recentlyFinishedItems, setRecentlyFinishedItems] = useState([]);
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const [editingTable, setEditingTable] = useState(null);
+  const [customerUsers, setCustomerUsers] = useState([]);
+  const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
+  const [reportRefreshKey, setReportRefreshKey] = useState(0);
 
-  const [serviceMode, setServiceMode] = useState("dining");
-  const [activeCustomerOrderId, setActiveCustomerOrderId] = useState(null);
-  const [queuedDiningItem, setQueuedDiningItem] = useState(null);
-  const [pendingDiningSwitchOrderId, setPendingDiningSwitchOrderId] =
-    useState(null);
-  const [reopenOrderDetailsId, setReopenOrderDetailsId] = useState(null);
-  const [diningAssignmentSource, setDiningAssignmentSource] = useState(null);
+  const tabs = useMemo(() => {
+    if (isCustomer) return ["tables", "menu", "cart"];
+    if (isKitchen) return ["kitchen"];
 
-  const [notification, setNotification] = useState(null);
-  const notificationTimerRef = useRef(null);
+    const staffTabs = ["tables", "menu", "cart", "kitchen", "orders"];
+    return isAdmin ? [...staffTabs, "report"] : staffTabs;
+  }, [isAdmin, isCustomer, isKitchen]);
+
+  const selectedTable = useMemo(
+    () => tables.find((table) => table.id === selectedTableId),
+    [selectedTableId, tables],
+  );
+
+  const pendingItems = cartItems.filter((item) => Number(item.isPending) === 1);
+  const currentItems = cartItems.filter((item) => Number(item.isPending) === 0);
+
+  const subtotal = useMemo(() => {
+    return cartItems.reduce(
+      (sum, item) =>
+        sum + (itemPrice(item) + itemNotesTotal(item)) * Number(item.quantity || 0),
+      0,
+    );
+  }, [cartItems]);
+
+  const tax = subtotal * TAX_RATE;
+  const tipAmount = Number(tips) || 0;
+  const total = subtotal + tax + tipAmount;
+
+  const refreshKitchen = useCallback(async (orderId = activeOrder?.id) => {
+    if (orderId) {
+      setKitchenItems(await getNotFinishedItemsByOrder(orderId));
+      return;
+    }
+
+    setKitchenItems(await getAllNotFinishedItems());
+  }, [activeOrder?.id]);
+
+  const refreshCart = useCallback(async (orderId = activeOrder?.id) => {
+    if (!orderId) return;
+    setCartItems(await getCartItemsByOrder(orderId));
+  }, [activeOrder?.id]);
+
+  const refreshTables = useCallback(async () => {
+    if (isCustomer) {
+      if (!customerTableId) {
+        setTables([]);
+        return;
+      }
+
+      setTables([await getTableById(customerTableId)]);
+      return;
+    }
+
+    setTables(await getAllTables());
+  }, [customerTableId, isCustomer]);
+
+  const refreshCustomerUsers = useCallback(async () => {
+    setCustomerUsers(await getCustomerUsers());
+  }, []);
+
+  const refreshMenuItems = useCallback(async () => {
+    setMenuItems(await getAllMenuItems());
+  }, []);
+
+  const refreshActiveOrderCart = useCallback(async () => {
+    if (!activeOrder?.id) return false;
+
+    await refreshCart(activeOrder.id);
+
+    if (!isCustomer) {
+      await refreshKitchen(activeOrder.id);
+    }
+
+    return true;
+  }, [activeOrder?.id, isCustomer, refreshCart, refreshKitchen]);
+
+  async function handleRefreshCartSection() {
+    const refreshed = await refreshActiveOrderCart();
+
+    if (!refreshed) {
+      showToast("Open a table first", "warning");
+      return;
+    }
+
+    await refreshTables();
+  }
+
+  const refreshOrdersSection = useCallback(() => {
+    setOrdersRefreshKey((key) => key + 1);
+  }, []);
+
+  const refreshReportSection = useCallback(() => {
+    setReportRefreshKey((key) => key + 1);
+  }, []);
+
+  const showToast = useCallback((message, type = "success") => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+
+    setToast({ message, type });
+
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2000);
+  }, []);
+
+  useEffect(() => {
+    async function loadInitialData() {
+      try {
+        if (!isKitchen) {
+          setMenuItems(await getAllMenuItems());
+        }
+
+        if (isCustomer) {
+          await refreshTables();
+        }
+
+        if (!isCustomer && !isKitchen) {
+          const [loadedTables, loadedCustomerUsers] = await Promise.all([
+            getAllTables(),
+            getCustomerUsers(),
+          ]);
+
+          setTables(loadedTables);
+          setCustomerUsers(loadedCustomerUsers);
+        }
+
+        if (!isCustomer) {
+          setKitchenItems(await getAllNotFinishedItems());
+        }
+      } catch (err) {
+        console.error("initial POS data load failed:", err);
+        showToast("Failed to load POS data", "error");
+      }
+    }
+
+    loadInitialData();
+  }, [isCustomer, isKitchen, refreshTables, showToast]);
+
+  useEffect(() => {
+    if (!tabs.includes(activeTab)) {
+      setActiveTab(tabs[0]);
+    }
+  }, [activeTab, tabs]);
+
+  useEffect(() => {
+    async function refreshVisibleTab() {
+      if (document.visibilityState !== "visible") return;
+
+      try {
+        if (activeTab === "cart") {
+          await refreshActiveOrderCart();
+          return;
+        }
+
+        if (activeTab === "menu" && !isKitchen) {
+          await refreshMenuItems();
+          return;
+        }
+
+        if (activeTab === "kitchen" && !isCustomer) {
+          await refreshKitchen(null);
+          return;
+        }
+
+        if (activeTab === "orders" && !isCustomer && !isKitchen) {
+          refreshOrdersSection();
+          return;
+        }
+
+        if (activeTab === "report" && isAdmin) {
+          refreshReportSection();
+          return;
+        }
+
+        if (activeTab === "tables") {
+          if (isCustomer) {
+            await refreshTables();
+          } else if (!isKitchen) {
+            await Promise.all([refreshTables(), refreshCustomerUsers()]);
+          }
+        }
+      } catch (err) {
+        console.error("visible tab refresh failed:", err);
+      }
+    }
+
+    window.addEventListener("focus", refreshVisibleTab);
+    document.addEventListener("visibilitychange", refreshVisibleTab);
+
+    return () => {
+      window.removeEventListener("focus", refreshVisibleTab);
+      document.removeEventListener("visibilitychange", refreshVisibleTab);
+    };
+  }, [
+    activeTab,
+    isCustomer,
+    isKitchen,
+    isAdmin,
+    refreshActiveOrderCart,
+    refreshCustomerUsers,
+    refreshKitchen,
+    refreshMenuItems,
+    refreshOrdersSection,
+    refreshReportSection,
+    refreshTables,
+  ]);
 
   useEffect(() => {
     return () => {
-      if (notificationTimerRef.current) {
-        clearTimeout(notificationTimerRef.current);
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
       }
     };
   }, []);
 
-  const showNotification = (message, type = "success", duration = 1800) => {
-    if (notificationTimerRef.current) {
-      clearTimeout(notificationTimerRef.current);
+  async function handleOpenTable(tableId) {
+    if (isKitchen) return;
+
+    if (isCustomer && Number(tableId) !== Number(customerTableId)) {
+      showToast("Customer account is not assigned to this table", "error");
+      return;
     }
 
-    setNotification({
-      id: Date.now(),
-      message,
-      type,
-    });
-
-    notificationTimerRef.current = setTimeout(() => {
-      setNotification(null);
-      notificationTimerRef.current = null;
-    }, duration);
-  };
-
-  const [orders, setOrders] = useState(() => {
-    const base = getNowParts();
-
-    return [
-      {
-        id: 1,
-        date: base.date,
-        time: "12:10",
-        orderNumber: "#1001",
-        type: "dining",
-        tableId: 1,
-        tableName: "Table 1",
-        status: "serving",
-        waiterName: mockUser.name,
-        userName: mockUser.name,
-        itemsCount: 3,
-        total: 22.48,
-        dishes: [
-          {
-            id: 101,
-            name: "Cheese Burger",
-            price: 9.99,
-            quantity: 2,
-            comment: "",
-            isPending: false,
-            modifiers: {
-              addOptions: ["Cheese", "Bacon"],
-              noOptions: ["Onion", "Pickles"],
-              switchPairs: [{ from: "Fries", to: "Salad" }],
-            },
-            selectedModifiers: {
-              add: ["Cheese"],
-              no: [],
-              switchPair: { from: "Fries", to: "Salad" },
-            },
-            addedAt: `${base.date}T12:10:00`,
-            addedDate: base.date,
-            addedTime: "12:10",
-            sentAt: `${base.date}T12:10:00`,
-            sentDate: base.date,
-            sentTime: "12:10",
-          },
-          {
-            id: 102,
-            name: "Coca Cola",
-            price: 2.5,
-            quantity: 1,
-            comment: "",
-            isPending: false,
-            modifiers: {
-              addOptions: ["Ice"],
-              noOptions: ["Sugar"],
-              switchPairs: [{ from: "Medium", to: "Large" }],
-            },
-            selectedModifiers: {
-              add: ["Ice"],
-              no: ["Sugar"],
-              switchPair: { from: "Medium", to: "Large" },
-            },
-            addedAt: `${base.date}T12:10:00`,
-            addedDate: base.date,
-            addedTime: "12:10",
-            sentAt: `${base.date}T12:10:00`,
-            sentDate: base.date,
-            sentTime: "12:10",
-          },
-        ],
-      },
-      {
-        id: 2,
-        date: base.date,
-        time: "12:20",
-        orderNumber: "#1002",
-        type: "dining",
-        tableId: 2,
-        tableName: "Table 2",
-        status: "serving",
-        waiterName: mockUser.name,
-        userName: mockUser.name,
-        itemsCount: 2,
-        total: 15.74,
-        dishes: [
-          {
-            id: 201,
-            name: "Chicken Burger",
-            price: 10.99,
-            quantity: 1,
-            comment: "",
-            isPending: false,
-            modifiers: {
-              addOptions: ["Egg"],
-              noOptions: ["Tomato"],
-              switchPairs: [{ from: "Fries", to: "Coleslaw" }],
-            },
-            selectedModifiers: {
-              add: [],
-              no: [],
-              switchPair: null,
-            },
-            addedAt: `${base.date}T12:20:00`,
-            addedDate: base.date,
-            addedTime: "12:20",
-            sentAt: `${base.date}T12:20:00`,
-            sentDate: base.date,
-            sentTime: "12:20",
-          },
-          {
-            id: 202,
-            name: "Chocolate Cake",
-            price: 4.75,
-            quantity: 1,
-            comment: "",
-            isPending: false,
-            modifiers: {
-              addOptions: ["Ice Cream"],
-              noOptions: [],
-              switchPairs: [],
-            },
-            selectedModifiers: {
-              add: ["Ice Cream"],
-              no: [],
-              switchPair: null,
-            },
-            addedAt: `${base.date}T12:20:00`,
-            addedDate: base.date,
-            addedTime: "12:20",
-            sentAt: `${base.date}T12:20:00`,
-            sentDate: base.date,
-            sentTime: "12:20",
-          },
-        ],
-      },
-      {
-        id: 3,
-        date: base.date,
-        time: "12:35",
-        orderNumber: "#1003",
-        type: "to-go",
-        tableId: null,
-        tableName: null,
-        customerName: "Guest",
-        phoneNumber: "",
-        address: "",
-        note: "",
-        status: "completed",
-        waiterName: mockUser.name,
-        userName: mockUser.name,
-        itemsCount: 1,
-        total: 7.25,
-        dishes: [
-          {
-            id: 301,
-            name: "Coca Cola",
-            price: 7.25,
-            quantity: 1,
-            comment: "",
-            isPending: false,
-            modifiers: {
-              addOptions: ["Ice"],
-              noOptions: ["Sugar"],
-              switchPairs: [{ from: "Medium", to: "Large" }],
-            },
-            selectedModifiers: {
-              add: [],
-              no: [],
-              switchPair: null,
-            },
-            addedAt: `${base.date}T12:35:00`,
-            addedDate: base.date,
-            addedTime: "12:35",
-            sentAt: `${base.date}T12:35:00`,
-            sentDate: base.date,
-            sentTime: "12:35",
-          },
-        ],
-      },
-    ];
-  });
-
-  const effectiveOrders = useMemo(
-    () => orders.map((order) => hydrateOrder(order)),
-    [orders]
-  );
-
-  const allowedSections = useMemo(() => {
-    if (isAdmin) {
-      return ["table-layout", "tables", "cart", "menu", "order", "report"];
-    }
-    if (isKitchen) {
-      return ["kitchen"];
-    }
-    if (isWaiterLike) {
-      return ["tables", "cart", "menu", "order", "report"];
-    }
-    if (isCustomer) {
-      return ["menu", "cart"];
-    }
-    return ["menu", "cart"];
-  }, [isAdmin, isKitchen, isWaiterLike, isCustomer]);
-
-  const currentSection = allowedSections.includes(activeSection)
-    ? activeSection
-    : defaultSection;
-
-  const getCurrentDateTime = () => {
-    const { date, time } = getNowParts();
-    return { date, time };
-  };
-
-  const createOrderNumber = (orderList = orders) => {
-    const numbers = orderList
-      .map((order) => Number(String(order.orderNumber || "").replace("#", "")))
-      .filter((value) => !Number.isNaN(value));
-
-    const max = numbers.length ? Math.max(...numbers) : 1000;
-    return `#${max + 1}`;
-  };
-
-  const getItemIdentity = (item) => {
-    const modifiers = item.selectedModifiers || {};
-    const add = modifiers.add || [];
-    const no = modifiers.no || [];
-    const switchPair = modifiers.switchPair || null;
-
-    return JSON.stringify({
-      id: item.id,
-      add,
-      no,
-      switchPair,
-    });
-  };
-
-  const normalizeItemForOrder = (item, overrides = {}) => {
-    const timestampFields = createDishTimestampFields({
-      addedAt: overrides.addedAt,
-      addedDate: overrides.addedDate,
-      addedTime: overrides.addedTime,
-      sentAt: overrides.sentAt,
-      sentDate: overrides.sentDate,
-      sentTime: overrides.sentTime,
-    });
-
-    return {
-      id: overrides.id ?? Date.now() + Math.floor(Math.random() * 1000),
-      name: item.name,
-      price: item.price,
-      quantity: item.quantity || 1,
-      comment: item.comment || "",
-      isPending: overrides.isPending ?? true,
-      modifiers: item.modifiers || {
-        addOptions: [],
-        noOptions: [],
-        switchPairs: [],
-      },
-      selectedModifiers: item.selectedModifiers || {
-        add: [],
-        no: [],
-        switchPair: null,
-      },
-      ...timestampFields,
-    };
-  };
-
-  const calculateOrderSummary = (dishes = []) =>
-    calculateOrderFinancials(dishes);
-
-  const activeDiningOrder = useMemo(() => {
-    if (!selectedTableId) return null;
-
-    return (
-      effectiveOrders.find(
-        (order) =>
-          order.type === "dining" &&
-          order.tableId === selectedTableId &&
-          order.status === "serving"
-      ) || null
-    );
-  }, [effectiveOrders, selectedTableId]);
-
-  const activeCustomerOrder = useMemo(() => {
-    if (!activeCustomerOrderId) return null;
-
-    return effectiveOrders.find((order) => order.id === activeCustomerOrderId) || null;
-  }, [effectiveOrders, activeCustomerOrderId]);
-
-  const activeOrder = selectedTableId ? activeDiningOrder : activeCustomerOrder;
-
-  const activeOrderState = useMemo(() => {
-    if (!activeOrder) {
-      return {
-        current: [],
-        pending: [],
-      };
-    }
-
-    return {
-      current: (activeOrder.dishes || []).filter((dish) => !dish.isPending),
-      pending: (activeOrder.dishes || []).filter((dish) => dish.isPending),
-    };
-  }, [activeOrder]);
-
-  const displayTables = useMemo(() => {
-    return tables;
-  }, [tables]);
-
-  const selectedTable =
-    displayTables.find((table) => table.id === selectedTableId) || null;
-
-  const unavailableDiningTableIds = useMemo(() => {
-    return effectiveOrders
-      .filter((order) => {
-        if (order.type !== "dining") return false;
-        if (order.status !== "serving") return false;
-        if (!order.tableId) return false;
-        if (
-          pendingDiningSwitchOrderId &&
-          pendingDiningSwitchOrderId !== "new-dining" &&
-          order.id === pendingDiningSwitchOrderId
-        ) {
-          return false;
-        }
-        return true;
-      })
-      .map((order) => order.tableId);
-  }, [effectiveOrders, pendingDiningSwitchOrderId]);
-
-  const isDiningAssignmentMode =
-    Boolean(queuedDiningItem) || Boolean(pendingDiningSwitchOrderId);
-
-  const navigateToSection = (section) => {
-    if (section !== "tables") {
-      const orderIdToReopen =
-        typeof pendingDiningSwitchOrderId === "number"
-          ? pendingDiningSwitchOrderId
-          : null;
-
-      setPendingDiningSwitchOrderId(null);
-      setQueuedDiningItem(null);
-
-      if (orderIdToReopen) {
-        setReopenOrderDetailsId(orderIdToReopen);
-      }
-    }
-
-    setActiveSection(section);
-  };
-
-  const ensureDiningOrderForTable = (tableId) => {
-    const existingOrder = orders.find(
-      (order) =>
-        order.type === "dining" &&
-        order.tableId === tableId &&
-        order.status === "serving"
-    );
-
-    if (existingOrder) {
-      return existingOrder.id;
-    }
-
-    const table = displayTables.find((entry) => entry.id === tableId);
-    if (!table) return null;
-
-    const { date, time } = getCurrentDateTime();
-    const newOrder = {
-      id: Date.now(),
-      date,
-      time,
-      orderNumber: createOrderNumber(),
-      type: "dining",
-      tableId,
-      tableName: table.name,
-      customerName: "",
-      phoneNumber: "",
-      address: "",
-      note: "",
-      status: "serving",
-      waiterName: mockUser.name,
-      userName: mockUser.name,
-      itemsCount: 0,
-      subtotal: 0,
-      tax: 0,
-      total: 0,
-      payment: "unpaid",
-      tips: 0,
-      dishes: [],
-    };
-
-    setOrders((prev) => [hydrateOrder(newOrder), ...prev]);
-    setTables((prevTables) =>
-      prevTables.map((entry) =>
-        entry.id === tableId
-          ? {
-              ...entry,
-              status: "occupied",
-            }
-          : entry
-      )
-    );
-    return newOrder.id;
-  };
-
-  const updateOrderDishes = (orderId, updater) => {
-    setOrders((prevOrders) =>
-      prevOrders.map((order) => {
-        if (order.id !== orderId) return order;
-
-        const nextDishes =
-          typeof updater === "function" ? updater(order.dishes || []) : updater;
-
-        const summary = calculateOrderSummary(nextDishes);
-        const { date, time } = getCurrentDateTime();
-
-        return hydrateOrder({
-          ...order,
-          date,
-          time,
-          dishes: nextDishes,
-          itemsCount: summary.itemsCount,
-          subtotal: summary.subtotal,
-          tax: summary.tax,
-          total: summary.total,
-          status:
-            order.status === "completed" && nextDishes.length > 0
-              ? "serving"
-              : order.status,
-        });
-      })
-    );
-  };
-
-  const addItemToOrder = (orderId, item) => {
-    updateOrderDishes(orderId, (prevDishes) => {
-      const normalizedItem = normalizeItemForOrder(item, {
-        isPending: true,
-      });
-
-      const identity = getItemIdentity(normalizedItem);
-      const existingIndex = prevDishes.findIndex(
-        (dish) => dish.isPending && getItemIdentity(dish) === identity
-      );
-
-      if (existingIndex === -1) {
-        return [...prevDishes, normalizedItem];
-      }
-
-      return prevDishes.map((dish, index) =>
-        index === existingIndex
-          ? {
-              ...dish,
-              quantity: (dish.quantity || 0) + (normalizedItem.quantity || 1),
-              addedAt: normalizedItem.addedAt,
-              addedDate: normalizedItem.addedDate,
-              addedTime: normalizedItem.addedTime,
-            }
-          : dish
-      );
-    });
-  };
-
-  const handleCreateCustomerOrder = (customerInfo) => {
-    const nextType = customerInfo.orderType;
-    const { date, time } = getCurrentDateTime();
-    const orderId = Date.now();
-
-    const newOrder = {
-      id: orderId,
-      date,
-      time,
-      orderNumber: createOrderNumber(),
-      type: nextType,
-      tableId: null,
-      tableName: null,
-      customerName: customerInfo.customerName || "",
-      phoneNumber: customerInfo.phoneNumber || "",
-      address: customerInfo.address || "",
-      note: customerInfo.note || "",
-      status: "serving",
-      waiterName: mockUser.name,
-      userName: mockUser.name,
-      itemsCount: 0,
-      subtotal: 0,
-      tax: 0,
-      total: 0,
-      payment: "unpaid",
-      tips: 0,
-      dishes: [],
-    };
-
-    setOrders((prev) => [hydrateOrder({
-      ...newOrder,
-      note: clampNoteWords(newOrder.note),
-    }), ...prev]);
-    setActiveCustomerOrderId(orderId);
-    setSelectedTableId(null);
-    setServiceMode(nextType);
-    setPendingDiningSwitchOrderId(null);
-    setQueuedDiningItem(null);
-  };
-
-  const handleCreateCustomerOrderAndAddItem = (customerInfo, item) => {
-    const nextType = customerInfo.orderType;
-    const { date, time } = getCurrentDateTime();
-    const orderId = Date.now();
-
-    const newOrder = {
-      id: orderId,
-      date,
-      time,
-      orderNumber: createOrderNumber(),
-      type: nextType,
-      tableId: null,
-      tableName: null,
-      customerName: customerInfo.customerName || "",
-      phoneNumber: customerInfo.phoneNumber || "",
-      address: customerInfo.address || "",
-      note: customerInfo.note || "",
-      status: "serving",
-      waiterName: mockUser.name,
-      userName: mockUser.name,
-      itemsCount: 0,
-      subtotal: 0,
-      tax: 0,
-      total: 0,
-      payment: "unpaid",
-      tips: 0,
-      dishes: [normalizeItemForOrder(item, { isPending: true })],
-    };
-
-    const summary = calculateOrderSummary(newOrder.dishes);
-    newOrder.itemsCount = summary.itemsCount;
-    newOrder.subtotal = summary.subtotal;
-    newOrder.tax = summary.tax;
-    newOrder.total = summary.total;
-
-    setOrders((prev) => [hydrateOrder({
-      ...newOrder,
-      note: clampNoteWords(newOrder.note),
-    }), ...prev]);
-    setActiveCustomerOrderId(orderId);
-    setSelectedTableId(null);
-    setServiceMode(nextType);
-    setPendingDiningSwitchOrderId(null);
-    setQueuedDiningItem(null);
-    setActiveSection("cart");
-  };
-
-  const handleOpenTable = (tableId) => {
-    const table = displayTables.find((entry) => entry.id === tableId);
-    const isBlockedForDiningAssignment =
-      isDiningAssignmentMode && unavailableDiningTableIds.includes(tableId);
-
-    if (isBlockedForDiningAssignment) return;
-
-    if (pendingDiningSwitchOrderId) {
-      let targetOrderId = null;
-
-      if (pendingDiningSwitchOrderId === "new-dining") {
-        targetOrderId = ensureDiningOrderForTable(tableId);
-      } else {
-        targetOrderId = pendingDiningSwitchOrderId;
-
-        setOrders((prevOrders) =>
-          prevOrders.map((order) =>
-            order.id === pendingDiningSwitchOrderId
-              ? {
-                  ...order,
-                  type: "dining",
-                  tableId,
-                  tableName: table?.name || `Table ${tableId}`,
-                  customerName: "",
-                  phoneNumber: "",
-                  address: "",
-                  note: "",
-                  status: "serving",
-                }
-              : order
-          )
-        );
-      }
-
-      setTables((prevTables) =>
-        prevTables.map((entry) =>
-          entry.id === tableId
-            ? {
-                ...entry,
-                status: "occupied",
-              }
-            : entry
-        )
-      );
-
-      setTables((prevTables) =>
-        prevTables.map((entry) =>
-          entry.id === tableId
-            ? {
-                ...entry,
-                status: "occupied",
-              }
-            : entry
-        )
-      );
+    try {
+      const order = await openTableOrder(tableId, USER_ID);
 
       setSelectedTableId(tableId);
-      setActiveCustomerOrderId(null);
-      setServiceMode("dining");
-      setPendingDiningSwitchOrderId(null);
-      setDiningAssignmentSource(null);
+      setActiveOrder(order);
 
-      if (queuedDiningItem && targetOrderId) {
-        addItemToOrder(targetOrderId, queuedDiningItem);
-        setQueuedDiningItem(null);
+      await refreshCart(order.id);
+      if (!isCustomer) {
+        await refreshKitchen(order.id);
       }
+      await refreshTables();
 
-      setActiveSection("menu");
-      return;
+      setActiveTab("menu");
+    } catch (err) {
+      console.error("open table failed:", err);
+      showToast("Open table failed", "error");
     }
+  }
 
-    const ensuredOrderId = ensureDiningOrderForTable(tableId);
+  async function handleAddItem(item) {
+    try {
+      let order = activeOrder;
 
-    setSelectedTableId(tableId);
-    setActiveCustomerOrderId(null);
-    setServiceMode("dining");
-
-    if (queuedDiningItem && ensuredOrderId) {
-      addItemToOrder(ensuredOrderId, queuedDiningItem);
-      setQueuedDiningItem(null);
-    }
-
-    setActiveSection("menu");
-  };
-
-  const handleCancelAssignDining = () => {
-    const shouldReopenOrderDetails =
-      diningAssignmentSource === "order-details" &&
-      typeof pendingDiningSwitchOrderId === "number";
-
-    const orderIdToReopen = shouldReopenOrderDetails
-      ? pendingDiningSwitchOrderId
-      : null;
-
-    setPendingDiningSwitchOrderId(null);
-    setDiningAssignmentSource(null);
-    setQueuedDiningItem(null);
-    setSelectedTableId(null);
-
-    if (orderIdToReopen) {
-      setReopenOrderDetailsId(orderIdToReopen);
-      setActiveSection("order");
-      return;
-    }
-
-    setActiveSection("menu");
-  };
-
-  const handleStartDiningSelection = (item) => {
-    setQueuedDiningItem(item);
-    setServiceMode("dining");
-    setActiveCustomerOrderId(null);
-    setSelectedTableId(null);
-    setPendingDiningSwitchOrderId(null);
-    setDiningAssignmentSource(null);
-    setActiveSection("tables");
-  };
-
-  const handleChangeActiveOrderType = (nextType) => {
-    if (!nextType) return;
-
-    if (nextType === "dining") {
-      if (selectedTableId) {
-        setServiceMode("dining");
-        setActiveCustomerOrderId(null);
-        setPendingDiningSwitchOrderId(null);
-        setDiningAssignmentSource(null);
-        setQueuedDiningItem(null);
-        setActiveSection("tables");
+      if (!order?.id && isCustomer) {
+        showToast("Open your assigned table first", "warning");
+        setActiveTab("tables");
         return;
       }
 
-      if (activeCustomerOrderId) {
-        setPendingDiningSwitchOrderId(activeCustomerOrderId);
-        setDiningAssignmentSource("service-panel");
-        setQueuedDiningItem(null);
-        setSelectedTableId(null);
-        setActiveSection("tables");
+      if (!order?.id) {
+        showToast("Select a table first", "warning");
         return;
       }
 
-      setServiceMode("dining");
-      setActiveCustomerOrderId(null);
-      setPendingDiningSwitchOrderId("new-dining");
-      setDiningAssignmentSource("service-panel");
-      setQueuedDiningItem(null);
-      setSelectedTableId(null);
-      setActiveSection("tables");
+      const createdItem = await addCartItem({
+        orderId: order.id,
+        menuItemId: item.id,
+        quantity: 1,
+      });
+
+      const modifierNotes = isCustomer
+        ? []
+        : modifierCartNotes(item.selectedModifiers);
+      let createdNotes = [];
+      let noteWarning = false;
+
+      if (modifierNotes.length > 0) {
+        try {
+          createdNotes = await Promise.all(
+            modifierNotes.map((note) => addCartItemNote(createdItem.id, note)),
+          );
+        } catch (noteErr) {
+          console.error("add modifier notes failed:", noteErr);
+          noteWarning = true;
+        }
+      }
+
+      setCartItems((items) => [
+        ...items,
+        { ...createdItem, notes: createdNotes },
+      ]);
+
+      if (noteWarning) {
+        showToast("Item added, but customization notes failed", "warning");
+      } else {
+        showToast(`${item.name} added to order successfully`);
+      }
+
+      try {
+        await refreshCart(order.id);
+      } catch (refreshErr) {
+        console.error("refresh cart after add failed:", refreshErr);
+        showToast("Item added, but cart refresh failed", "warning");
+      }
+    } catch (err) {
+      console.error("add item failed:", err);
+      showToast(err.message || "Failed to add item", "error");
+    }
+  }
+
+  async function handleIncrease(item) {
+    if (Number(item.isPending) !== 1) {
+      showToast("Sent items cannot be changed", "warning");
       return;
     }
 
-    if (selectedTableId && activeDiningOrder) {
-      const tableIdToRelease = selectedTableId;
-      const targetOrderId = activeDiningOrder.id;
+    try {
+      await updateCartItem(item.id, {
+        quantity: Number(item.quantity || 0) + 1,
+      });
+      await refreshCart();
+    } catch (err) {
+      console.error("increase item quantity failed:", err);
+      showToast("Failed to update quantity", "error");
+    }
+  }
 
-      setOrders((prevOrders) =>
-        prevOrders.map((order) =>
-          order.id === targetOrderId
-            ? {
-                ...order,
-                type: nextType,
-                tableId: null,
-                tableName: null,
-              }
-            : order
-        )
-      );
-
-      setTables((prevTables) =>
-        prevTables.map((table) =>
-          table.id === tableIdToRelease
-            ? {
-                ...table,
-                status: "available",
-              }
-            : table
-        )
-      );
-
-      setActiveCustomerOrderId(targetOrderId);
-      setSelectedTableId(null);
-      setServiceMode(nextType);
-      setPendingDiningSwitchOrderId(null);
-      setDiningAssignmentSource(null);
-      setQueuedDiningItem(null);
+  async function handleDecrease(item) {
+    if (Number(item.isPending) !== 1) {
+      showToast("Sent items cannot be changed", "warning");
       return;
     }
 
-    if (activeCustomerOrderId) {
-      setOrders((prevOrders) =>
-        prevOrders.map((order) =>
-          order.id === activeCustomerOrderId
-            ? {
-                ...order,
-                type: nextType,
-              }
-            : order
-        )
-      );
+    try {
+      if (Number(item.quantity) <= 1) {
+        await deleteCartItem(item.id);
+      } else {
+        await updateCartItem(item.id, {
+          quantity: Number(item.quantity) - 1,
+        });
+      }
 
-      setServiceMode(nextType);
-      setPendingDiningSwitchOrderId(null);
-      setDiningAssignmentSource(null);
-      setQueuedDiningItem(null);
+      await refreshCart();
+    } catch (err) {
+      console.error("decrease item quantity failed:", err);
+      showToast("Failed to update quantity", "error");
     }
-  };
+  }
 
-  const handleSaveTableLayout = (nextTables) => {
-    const deletedTableIds = tables
-      .filter((table) => !nextTables.some((nextTable) => nextTable.id === table.id))
-      .map((table) => table.id);
-
-    const nonOccupiedTableIds = nextTables
-      .filter((table) => table.status !== "occupied")
-      .map((table) => table.id);
-
-    const orderIdsToRemove = new Set(
-      orders
-        .filter(
-          (order) =>
-            order.type === "dining" &&
-            order.tableId !== null &&
-            (deletedTableIds.includes(order.tableId) ||
-              nonOccupiedTableIds.includes(order.tableId))
-        )
-        .map((order) => order.id)
-    );
-
-    const selectedTableWillBeCleared =
-      selectedTableId !== null &&
-      (deletedTableIds.includes(selectedTableId) ||
-        nonOccupiedTableIds.includes(selectedTableId));
-
-    setTables(nextTables);
-
-    if (orderIdsToRemove.size > 0) {
-      setOrders((prevOrders) =>
-        prevOrders.filter((order) => !orderIdsToRemove.has(order.id))
+  async function handleUpdateTable(updatedTable) {
+    try {
+      await updateTable(
+        updatedTable.id,
+        {
+          label: updatedTable.label,
+          seat: Number(updatedTable.seat),
+          tableStatus: updatedTable.tableStatus,
+          posX: updatedTable.posX,
+          posY: updatedTable.posY,
+        },
+        USER_ID,
       );
 
-      if (selectedTableWillBeCleared) {
-        setSelectedTableId(null);
-      }
+      setTables(await getAllTables());
+      showToast("Table updated successfully");
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to update table", "error");
+    }
+  }
 
-      if (activeCustomerOrderId && orderIdsToRemove.has(activeCustomerOrderId)) {
-        setActiveCustomerOrderId(null);
-      }
+  async function handleAssignCustomerToTable(tableId, customerId) {
+    try {
+      const updatedCustomerUsers = await assignCustomerToTable(tableId, customerId);
+
+      setCustomerUsers(updatedCustomerUsers);
+      showToast(customerId ? "Customer assigned to table" : "Customer assignment cleared");
+    } catch (err) {
+      console.error("assign customer to table failed:", err);
+      showToast(err.message || "Failed to update customer assignment", "error");
+      throw err;
+    }
+  }
+
+  async function handleCloseTableOrder(table, code) {
+    try {
+      await closeTableOrder(table.id, code);
 
       if (
-        pendingDiningSwitchOrderId &&
-        pendingDiningSwitchOrderId !== "new-dining" &&
-        orderIdsToRemove.has(pendingDiningSwitchOrderId)
+        Number(activeOrder?.table?.id) === Number(table.id) ||
+        Number(selectedTableId) === Number(table.id)
       ) {
-        setPendingDiningSwitchOrderId(null);
-        setQueuedDiningItem(null);
+        setActiveOrder(null);
+        setSelectedTableId(null);
+        setCartItems([]);
+        setTips(0);
+        setPaymentMethod("CASH");
       }
 
-      if (reopenOrderDetailsId && orderIdsToRemove.has(reopenOrderDetailsId)) {
-        setReopenOrderDetailsId(null);
-      }
+      await refreshTables();
+      await refreshKitchen(null);
+      showToast(`${table.label} order closed`);
+    } catch (err) {
+      console.error("close table order failed:", err);
+      showToast(err.message || "Failed to close order", "error");
+      throw err;
     }
-  };
+  }
 
+  async function handleFinishKitchenItem(item) {
+    const previousKitchenItems = kitchenItems;
 
-  const handleAddItemToPending = (item) => {
-    if (selectedTableId) {
-      const targetOrderId =
-        activeDiningOrder?.id || ensureDiningOrderForTable(selectedTableId);
+    setKitchenItems((items) =>
+      items.filter((kitchenItem) => kitchenItem.id !== item.id),
+    );
 
-      if (targetOrderId) {
-        addItemToOrder(targetOrderId, item);
-        showNotification(`${item?.name || "Item"} added to order.`, "success");
-      } else {
-        showNotification("Could not add item to order.", "error");
-      }
+    try {
+      const finishedItem = await finishCartItem(item.id);
+      setRecentlyFinishedItems((items) => [
+        { ...item, ...finishedItem, isFinished: 1 },
+        ...items.filter((recentItem) => recentItem.id !== item.id),
+      ].slice(0, 6));
+    } catch (err) {
+      console.error("finish kitchen item failed:", err);
+      setKitchenItems(previousKitchenItems);
+      showToast("Failed to finish item", "error");
       return;
     }
 
-    if (serviceMode !== "dining" && activeCustomerOrderId) {
-      addItemToOrder(activeCustomerOrderId, item);
-      showNotification(`${item?.name || "Item"} added to order.`, "success");
+    try {
+      await refreshKitchen(null);
+      await refreshCart();
+      showToast(`${item.name || item.nameSnapshot} finished`);
+    } catch (err) {
+      console.error("refresh after finish failed:", err);
+      showToast("Item finished, but refresh failed", "warning");
+    }
+  }
+
+  async function handleRevertFinishedKitchenItem(item) {
+    const previousFinishedItems = recentlyFinishedItems;
+
+    setRecentlyFinishedItems((items) =>
+      items.filter((recentItem) => recentItem.id !== item.id),
+    );
+
+    try {
+      await revertFinishedCartItem(item.id);
+      await refreshKitchen(null);
+      await refreshCart();
+      showToast(`${itemName(item)} moved back to preparing`);
+    } catch (err) {
+      console.error("revert finished item failed:", err);
+      setRecentlyFinishedItems(previousFinishedItems);
+      showToast("Failed to revert item", "error");
+    }
+  }
+
+  async function handleRemove(item) {
+    if (Number(item.isPending) !== 1) {
+      showToast("Sent items cannot be removed", "warning");
       return;
     }
 
-    showNotification("Please open or create an order first.", "error");
-  };
+    try {
+      await deleteCartItem(item.id);
+      await refreshCart();
+      showToast(`${itemName(item)} removed`);
+    } catch (err) {
+      console.error("remove cart item failed:", err);
+      showToast("Failed to remove item", "error");
+    }
+  }
 
-  const handleAddCurrentItemToPending = (item) => {
-    handleAddItemToPending({
-      ...item,
-      quantity: 1,
-    });
-  };
+  async function handleAddCartItemNote(item, payload) {
+    if (isCustomer) {
+      showToast("Customer orders cannot add notes", "warning");
+      return;
+    }
 
-  const handleIncreasePending = (itemToIncrease) => {
-    if (!activeOrder) return;
+    if (Number(item.isPending) !== 1) {
+      showToast("Sent items cannot be changed", "warning");
+      return;
+    }
 
-    updateOrderDishes(activeOrder.id, (prevDishes) => {
-      const identity = getItemIdentity(itemToIncrease);
-      const { iso, date, time } = getNowParts();
+    try {
+      await addCartItemNote(item.id, payload);
+      await refreshCart();
+      showToast("Note added");
+    } catch (err) {
+      console.error("add cart item note failed:", err);
+      showToast("Failed to add note", "error");
+    }
+  }
 
-      return prevDishes.map((dish) =>
-        dish.isPending && getItemIdentity(dish) === identity
-          ? {
-              ...dish,
-              quantity: (dish.quantity || 0) + 1,
-              addedAt: iso,
-              addedDate: date,
-              addedTime: time,
-            }
-          : dish
+  async function handleUpdateCartItemNote(item, noteId, payload) {
+    if (isCustomer) {
+      showToast("Customer orders cannot change notes", "warning");
+      return;
+    }
+
+    if (Number(item.isPending) !== 1) {
+      showToast("Sent items cannot be changed", "warning");
+      return;
+    }
+
+    try {
+      await updateCartItemNote(noteId, payload);
+      await refreshCart();
+      showToast("Note updated");
+    } catch (err) {
+      console.error("update cart item note failed:", err);
+      showToast("Failed to update note", "error");
+    }
+  }
+
+  async function handleDeleteCartItemNote(item, noteId) {
+    if (isCustomer) {
+      showToast("Customer orders cannot delete notes", "warning");
+      return;
+    }
+
+    if (Number(item.isPending) !== 1) {
+      showToast("Sent items cannot be changed", "warning");
+      return;
+    }
+
+    try {
+      await deleteCartItemNote(noteId);
+      await refreshCart();
+      showToast("Note deleted");
+    } catch (err) {
+      console.error("delete cart item note failed:", err);
+      showToast("Failed to delete note", "error");
+    }
+  }
+
+  async function handleSend() {
+    if (pendingItems.length === 0) {
+      showToast("No pending items to send", "warning");
+      return;
+    }
+
+    try {
+      await Promise.all(pendingItems.map((item) => sendCartItem(item.id)));
+
+      await refreshCart();
+      if (!isCustomer) {
+        await refreshKitchen();
+      }
+      showToast(isCustomer ? "Order placed" : "Sent to kitchen");
+    } catch (err) {
+      console.error("send pending items failed:", err);
+      showToast(
+        isCustomer ? "Failed to place order" : "Failed to send to kitchen",
+        "error",
       );
-    });
-  };
+    }
+  }
 
-  const handleDecreasePending = (itemToDecrease) => {
-    if (!activeOrder) return;
+  async function handleCheckout(paymentDetails) {
+    if (!activeOrder?.id) return;
 
-    updateOrderDishes(activeOrder.id, (prevDishes) => {
-      const identity = getItemIdentity(itemToDecrease);
-
-      return prevDishes
-        .map((dish) =>
-          dish.isPending && getItemIdentity(dish) === identity
-            ? { ...dish, quantity: (dish.quantity || 0) - 1 }
-            : dish
-        )
-        .filter((dish) => dish.quantity > 0);
-    });
-  };
-
-  const handleRemovePending = (itemToRemove) => {
-    if (!activeOrder) return;
-
-    updateOrderDishes(activeOrder.id, (prevDishes) => {
-      const identity = getItemIdentity(itemToRemove);
-
-      return prevDishes.filter(
-        (dish) => !(dish.isPending && getItemIdentity(dish) === identity)
-      );
-    });
-  };
-
-  const handleSendPending = () => {
-    if (!activeOrder) {
-      showNotification("No active order selected.", "error");
+    if (cartItems.length === 0) {
+      showToast("Cart is empty", "warning");
       return;
     }
 
-    if (activeOrderState.pending.length === 0) {
-      showNotification("There are no pending items to send.", "error");
-      return;
-    }
-
-    updateOrderDishes(activeOrder.id, (prevDishes) => {
-      const sentItems = prevDishes.filter((dish) => !dish.isPending);
-      const pendingItems = prevDishes.filter((dish) => dish.isPending);
-      const sentStamp = getNowParts();
-
-      let mergedCurrent = [...sentItems];
-
-      pendingItems.forEach((pendingItem) => {
-        const identity = getItemIdentity(pendingItem);
-        const existingIndex = mergedCurrent.findIndex(
-          (currentItem) => getItemIdentity(currentItem) === identity
-        );
-
-        if (existingIndex === -1) {
-          mergedCurrent.push({
-            ...pendingItem,
-            isPending: false,
-            sentAt: sentStamp.iso,
-            sentDate: sentStamp.date,
-            sentTime: sentStamp.time,
-          });
-          return;
-        }
-
-        mergedCurrent = mergedCurrent.map((currentItem, index) =>
-          index === existingIndex
-            ? {
-                ...currentItem,
-                quantity:
-                  (currentItem.quantity || 0) + (pendingItem.quantity || 0),
-                sentAt: sentStamp.iso,
-                sentDate: sentStamp.date,
-                sentTime: sentStamp.time,
-              }
-            : currentItem
-        );
+    try {
+      await checkoutOrder(activeOrder.id, {
+        transactionMethod: paymentDetails.transactionMethod,
+        cardType: paymentDetails.cardType,
+        tips: paymentDetails.tips,
+        subtotal,
+        tax,
+        total: paymentDetails.total,
       });
 
-      return mergedCurrent.map((dish) => ({
-        ...dish,
-        isPending: false,
-      }));
-    });
-
-    showNotification("Pending items sent successfully.", "success");
-  };
-
-  const handleSaveOrder = (updatedOrder) => {
-    setOrders((prevOrders) =>
-      prevOrders.map((order) => {
-        if (order.id !== updatedOrder.id) return order;
-
-        const summary = calculateOrderSummary(updatedOrder.dishes || []);
-
-        return hydrateOrder({
-          ...updatedOrder,
-          note: clampNoteWords(updatedOrder.note),
-          itemsCount: summary.itemsCount,
-          subtotal: summary.subtotal,
-          tax: summary.tax,
-          total: summary.total,
-          cardType:
-            (updatedOrder.payment || "unpaid") === "card"
-              ? updatedOrder.cardType || "visa"
-              : "none",
-          tips: roundToTwo(updatedOrder.tips || 0),
-        });
-      })
-    );
-
-    if (updatedOrder.type === "dining") {
-      setSelectedTableId(updatedOrder.tableId || null);
-      if (updatedOrder.tableId) {
-        setActiveCustomerOrderId(null);
-        setServiceMode("dining");
-      }
-    } else if (activeOrder?.id === updatedOrder.id) {
+      setActiveOrder(null);
       setSelectedTableId(null);
-      setActiveCustomerOrderId(updatedOrder.id);
-      setServiceMode(updatedOrder.type);
+      setCartItems([]);
+      setTips(0);
+      setPaymentMethod("CASH");
+
+      await refreshTables();
+      showToast("Checkout complete");
+    } catch (err) {
+      console.error("checkout failed:", err);
+      showToast("Checkout failed", "error");
+      throw err;
     }
-  };
+  }
 
-  const handleSendPendingForOrder = (orderId, pendingDishIds) => {
-    if (!orderId) {
-      showNotification("No order selected.", "error");
-      return;
-    }
+  async function handleOrderUpdated(orderId, options = {}) {
+    try {
+      await refreshTables();
 
-    if (!Array.isArray(pendingDishIds) || pendingDishIds.length === 0) {
-      showNotification("Please select pending items to send.", "error");
-      return;
-    }
-
-    updateOrderDishes(orderId, (prevDishes) => {
-      const sentStamp = getNowParts();
-
-      const nextDishes = prevDishes.map((dish) =>
-        pendingDishIds.includes(dish.id)
-          ? {
-              ...dish,
-              isPending: false,
-              sentAt: sentStamp.iso,
-              sentDate: sentStamp.date,
-              sentTime: sentStamp.time,
-            }
-          : dish
-      );
-
-      const sentItems = nextDishes.filter((dish) => !dish.isPending);
-      const pendingItems = nextDishes.filter((dish) => dish.isPending);
-
-      let mergedSent = [];
-
-      sentItems.forEach((dish) => {
-        const identity = getItemIdentity(dish);
-        const existingIndex = mergedSent.findIndex(
-          (currentItem) => getItemIdentity(currentItem) === identity
-        );
-
-        if (existingIndex === -1) {
-          mergedSent.push(dish);
-          return;
-        }
-
-        mergedSent = mergedSent.map((currentItem, index) =>
-          index === existingIndex
-            ? {
-                ...currentItem,
-                quantity: (currentItem.quantity || 0) + (dish.quantity || 0),
-                sentAt: dish.sentAt || currentItem.sentAt || sentStamp.iso,
-                sentDate:
-                  dish.sentDate || currentItem.sentDate || sentStamp.date,
-                sentTime:
-                  dish.sentTime || currentItem.sentTime || sentStamp.time,
-              }
-            : currentItem
-        );
-      });
-
-      return [...mergedSent, ...pendingItems];
-    });
-
-    showNotification("Selected items sent successfully.", "success");
-  };
-
-  const handleDeletePendingDishes = (orderId, pendingDishIds) => {
-    updateOrderDishes(orderId, (prevDishes) =>
-      prevDishes.filter((dish) => !pendingDishIds.includes(dish.id))
-    );
-  };
-
-  const handleOpenOrderInMenu = (order) => {
-    if (!order) return;
-
-    if (order.type === "dining" && order.tableId) {
-      setSelectedTableId(order.tableId);
-      setActiveCustomerOrderId(null);
-      setServiceMode("dining");
-      setPendingDiningSwitchOrderId(null);
-      setQueuedDiningItem(null);
-      setActiveSection("menu");
-      return;
-    }
-
-    setSelectedTableId(null);
-    setActiveCustomerOrderId(order.id);
-    setServiceMode(order.type || "to-go");
-    setPendingDiningSwitchOrderId(null);
-    setQueuedDiningItem(null);
-    setActiveSection("menu");
-  };
-
-  const handleToggleDishFinished = (orderId, dishId) => {
-    setOrders((prev) =>
-      prev.map((order) =>
-        order.id !== orderId
-          ? order
-          : hydrateOrder({
-              ...order,
-              dishes: (order.dishes || []).map((dish) =>
-                dish.id !== dishId
-                  ? dish
-                  : {
-                      ...dish,
-                      kitchenFinished: !dish.kitchenFinished,
-                    }
-              ),
-            })
-      )
-    );
-  };
-
-
-  const handleCheckoutOrder = (orderId, checkoutPayload, orderSnapshot = null) => {
-    if (!orderId) return;
-
-    let completedOrder = null;
-
-    setOrders((prevOrders) =>
-      prevOrders.map((order) => {
-        if (order.id !== orderId) return order;
-
-        const baseOrder =
-          orderSnapshot && orderSnapshot.id === orderId
-            ? {
-                ...order,
-                ...orderSnapshot,
-                dishes: Array.isArray(orderSnapshot.dishes)
-                  ? orderSnapshot.dishes
-                  : order.dishes,
-              }
-            : order;
-
-        const timestamp = getNowParts();
-        const sentDishes = (baseOrder.dishes || []).map((dish) => ({
-          ...dish,
-          isPending: false,
-          sentAt: dish.sentAt || timestamp.iso,
-          sentDate: dish.sentDate || timestamp.date,
-          sentTime: dish.sentTime || timestamp.time,
-        }));
-
-        completedOrder = hydrateOrder({
-          ...baseOrder,
-          dishes: sentDishes,
-          payment: checkoutPayload?.payment || baseOrder.payment || "cash",
-          cardType:
-            (checkoutPayload?.payment || baseOrder.payment || "cash") === "card"
-              ? checkoutPayload?.cardType || baseOrder.cardType || "visa"
-              : "none",
-          tips: roundToTwo(
-            checkoutPayload?.tips !== undefined
-              ? checkoutPayload.tips
-              : baseOrder.tips || 0
-          ),
-          cashReceived: roundToTwo(checkoutPayload?.cashReceived || 0),
-          cashChange: roundToTwo(checkoutPayload?.change || 0),
-          status: "completed",
-        });
-
-        return completedOrder;
-      })
-    );
-
-    if (completedOrder?.type === "dining" && completedOrder?.tableId) {
-      setTables((prevTables) =>
-        prevTables.map((table) =>
-          table.id === completedOrder.tableId
-            ? { ...table, status: "available" }
-            : table
-        )
-      );
-    }
-
-    if (selectedTableId === completedOrder?.tableId) {
-      setSelectedTableId(null);
-    }
-
-    if (activeCustomerOrderId === orderId) {
-      setActiveCustomerOrderId(null);
-    }
-
-    setReopenOrderDetailsId(null);
-    setPendingDiningSwitchOrderId(null);
-    setQueuedDiningItem(null);
-
-    if (completedOrder?.type === "dining") {
-      setServiceMode("dining");
-      if (activeSection === "cart") {
-        setActiveSection("tables");
+      if (options.deleted) {
+        await refreshKitchen(null);
       }
+
+      if (options.deleted && Number(activeOrder?.id) === Number(orderId)) {
+        setActiveOrder(null);
+        setSelectedTableId(null);
+        setCartItems([]);
+        setTips(0);
+        setPaymentMethod("CASH");
+      }
+
+      if (!options.deleted && orderId && Number(activeOrder?.id) === Number(orderId)) {
+        const updatedOrder = await getOrderById(orderId);
+        setActiveOrder(updatedOrder);
+        setSelectedTableId(updatedOrder.table?.id || null);
+        await refreshCart(orderId);
+      }
+    } catch (err) {
+      console.error("refresh after order update failed:", err);
+      showToast("Order changed, but page refresh failed", "warning");
     }
-
-    showNotification(
-      `${completedOrder?.orderNumber || "Order"} checked out successfully.`,
-      "success"
-    );
-  };
-
-  const globalActiveOrder = activeOrder || null;
-
-  const currentServiceLabel =
-    globalActiveOrder?.type === "dining"
-      ? globalActiveOrder.tableName ||
-        (globalActiveOrder.tableId ? `Table ${globalActiveOrder.tableId}` : "Dining")
-      : globalActiveOrder?.customerName ||
-        globalActiveOrder?.orderNumber ||
-        "Customer Order";
-
-  const currentTypeValue =
-    serviceMode === "to-go"
-      ? "to-go"
-      : serviceMode === "delivery"
-      ? "delivery"
-      : "dining";
-
-  const showGlobalServicePanel = (isWaiterLike || isAdmin) && Boolean(globalActiveOrder);
+  }
 
   return (
     <div style={styles.page}>
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            top: 20,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background:
+              toast.type === "error"
+                ? "rgba(220, 38, 38, 0.73)"
+                : toast.type === "warning"
+                  ? "rgba(234, 178, 8, 0.69)"
+                  : "rgba(22, 163, 74, 0.7)",
+            color: "white",
+            padding: "12px 20px",
+            borderRadius: 10,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+            zIndex: 9999,
+            fontWeight: 600,
+            animation: "fadeInOut 2s ease",
+          }}
+        >
+          {toast.message}
+        </div>
+      )}
+
       <header style={styles.header}>
-        <div style={styles.headerRow}>
-          <div style={styles.headerLeft}>
-            <h1 style={styles.title}>Restaurant POS</h1>
-            <p style={styles.subtitle}>
-              Manage table service, to-go, and delivery orders.
-            </p>
-            <p style={styles.userText}>User: {mockUser.name}</p>
-          </div>
+        <div>
+          <h1 style={styles.title}>Restaurant POS</h1>
+          <p style={styles.subtitle}>
+            {isCustomer
+              ? "Select your assigned table and place an order"
+              : isKitchen
+                ? "Kitchen tickets and finished-item recovery"
+                : "Tables, orders, kitchen, and checkout"}
+          </p>
+        </div>
 
-          {showGlobalServicePanel && (
-            <div
-              style={styles.servicePanel}
-              onClick={() => navigateToSection("cart")}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  navigateToSection("cart");
-                }
-              }}
-              title="Open current order cart"
-            >
-              <div style={styles.serviceTextBlock}>
-                <span style={styles.serviceLabel}>Now serving</span>
-                <strong style={styles.serviceOrderNumber}>
-                  {globalActiveOrder?.orderNumber || "No Order"}
-                </strong>
-                <span style={styles.serviceMeta}>{currentServiceLabel}</span>
-              </div>
-
-              <select
-                value={currentTypeValue}
-                onChange={(e) => handleChangeActiveOrderType(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-                onKeyDown={(e) => e.stopPropagation()}
-                style={styles.serviceTypeSelect}
-              >
-                <option value="dining">Dining</option>
-                <option value="to-go">To-Go</option>
-                <option value="delivery">Delivery</option>
-              </select>
+        <div style={styles.userBox}>
+          {isCustomer && (
+            <div style={styles.contextBox}>
+              <span style={styles.contextLabel}>Table</span>
+              <strong>
+                {activeOrder?.table?.label || customerTableLabel || "No table"}
+              </strong>
+              {customerTableSeat && (
+                <span style={styles.contextSub}>{customerTableSeat} seats</span>
+              )}
             </div>
           )}
-        </div>
-        {notification && (
-          <div
-            style={{
-              ...styles.notification,
-              ...(notification.type === "error"
-                ? styles.notificationError
-                : styles.notificationSuccess),
-            }}
-          >
-            {notification.message}
+
+          {!isCustomer && !isKitchen && selectedTable && (
+            <div style={styles.contextBox}>
+              <span style={styles.contextLabel}>Table</span>
+              <strong>{selectedTable.label}</strong>
+            </div>
+          )}
+
+          {isKitchen && (
+            <div style={styles.contextBox}>
+              <span style={styles.contextLabel}>Station</span>
+              <strong>Kitchen</strong>
+            </div>
+          )}
+
+          <div>
+            <strong>{user?.username}</strong>
+            <div style={styles.role}>{user?.role}</div>
           </div>
-        )}
+
+          <button onClick={onLogout} style={styles.logoutButton}>
+            Logout
+          </button>
+        </div>
       </header>
 
-      <nav style={styles.nav}>
-        {isAdmin && (
+      <nav style={styles.tabs}>
+        {tabs.map((tab) => (
           <button
-            type="button"
-            style={{
-              ...styles.navButton,
-              ...(currentSection === "table-layout" ? styles.navButtonActive : {}),
-            }}
-            onClick={() => navigateToSection("table-layout")}
-          >
-            Table Layout
-          </button>
-        )}
+            key={tab}
+            onClick={async () => {
+              setActiveTab(tab);
 
-        {(isAdmin || isWaiterLike) && (
-          <button
-            type="button"
-            style={{
-              ...styles.navButton,
-              ...(currentSection === "tables" ? styles.navButtonActive : {}),
-            }}
-            onClick={() => navigateToSection("tables")}
-          >
-            Tables
-          </button>
-        )}
+              try {
+                if (tab === "kitchen") {
+                  await refreshKitchen(null);
+                }
 
-        {allowedSections.includes("menu") && (
-          <button
-            type="button"
-            style={{
-              ...styles.navButton,
-              ...(currentSection === "menu" ? styles.navButtonActive : {}),
-            }}
-            onClick={() => navigateToSection("menu")}
-          >
-            Menu
-          </button>
-        )}
+                if (tab === "cart") {
+                  await refreshActiveOrderCart();
+                }
 
-        {allowedSections.includes("cart") && (
-          <button
-            type="button"
-            style={{
-              ...styles.navButton,
-              ...(currentSection === "cart" ? styles.navButtonActive : {}),
-            }}
-            onClick={() => navigateToSection("cart")}
-          >
-            Cart
-          </button>
-        )}
+                if (tab === "menu") {
+                  await refreshMenuItems();
+                }
 
-        {(isAdmin || isWaiterLike) && (
-          <button
-            type="button"
-            style={{
-              ...styles.navButton,
-              ...(currentSection === "order" ? styles.navButtonActive : {}),
-            }}
-            onClick={() => navigateToSection("order")}
-          >
-            Order
-          </button>
-        )}
+                if (tab === "orders") {
+                  refreshOrdersSection();
+                }
 
-        {isKitchen && (
-          <button
-            type="button"
-            style={{
-              ...styles.navButton,
-              ...(currentSection === "kitchen" ? styles.navButtonActive : {}),
-            }}
-            onClick={() => navigateToSection("kitchen")}
-          >
-            Kitchen
-          </button>
-        )}
+                if (tab === "report" && isAdmin) {
+                  refreshReportSection();
+                }
 
-        {isAdmin && (
-          <button
-            type="button"
-            style={{
-              ...styles.navButton,
-              ...(currentSection === "report" ? styles.navButtonActive : {}),
+                if (tab === "tables") {
+                  if (isCustomer) {
+                    await refreshTables();
+                  } else {
+                    await Promise.all([refreshTables(), refreshCustomerUsers()]);
+                  }
+                }
+              } catch (err) {
+                console.error("tab refresh failed:", err);
+                showToast(`Failed to refresh ${tab}`, "error");
+              }
             }}
-            onClick={() => navigateToSection("report")}
+            style={{
+              ...styles.tabButton,
+              ...(activeTab === tab ? styles.activeTab : {}),
+            }}
           >
-            Report
+            {tab[0].toUpperCase() + tab.slice(1)}
           </button>
-        )}
+        ))}
       </nav>
 
       <main style={styles.content}>
-        {currentSection === "table-layout" && isAdmin && (
-          <TableLayoutSection
-            tables={tables}
-            onSaveTablesChanges={handleSaveTableLayout}
-            selectedTableId={selectedTableId}
-          />
-        )}
-
-        {currentSection === "tables" && (isAdmin || isWaiterLike) && (
+        {activeTab === "tables" && (
           <TablesSection
-            tables={displayTables}
+            tables={tables}
+            selectedTableId={selectedTableId}
+            customerUsers={customerUsers}
+            isCustomer={isCustomer}
+            canEditTables={!isCustomer && !isKitchen}
+            canManageAssignments={!isCustomer && !isKitchen}
+            canCloseOrders={!isCustomer && !isKitchen}
             onOpenTable={handleOpenTable}
-            selectedTableId={selectedTableId}
-            disabledTableIds={isDiningAssignmentMode ? unavailableDiningTableIds : []}
-            selectionMode={isDiningAssignmentMode ? "assign-dining" : "normal"}
-            onCancelAssignDining={handleCancelAssignDining}
+            onUpdateTable={handleUpdateTable}
+            onEditTable={(table) => setEditingTable({ ...table })}
+            onAssignCustomer={handleAssignCustomerToTable}
+            onCloseOrder={handleCloseTableOrder}
           />
         )}
 
-        {currentSection === "menu" && (
-          <MenuPage
-            role={role}
-            selectedTableId={selectedTableId}
-            selectedTableName={selectedTable?.name || ""}
-            activeServiceMode={serviceMode}
-            activeCustomerOrder={activeCustomerOrder}
-            onAddToCart={handleAddItemToPending}
-            onOpenDining={() => {
-              setServiceMode("dining");
-              setActiveCustomerOrderId(null);
-              setSelectedTableId(null);
-              setPendingDiningSwitchOrderId("new-dining");
-              setQueuedDiningItem(null);
-              setActiveSection("tables");
-            }}
-            onStartDiningSelection={handleStartDiningSelection}
-            onCustomerInfoSave={handleCreateCustomerOrder}
-            onCreateCustomerOrderAndAddItem={handleCreateCustomerOrderAndAddItem}
-            onChangeActiveOrderType={handleChangeActiveOrderType}
+        {activeTab === "menu" && (
+          <MenuSection
+            items={menuItems}
+            onAddItem={handleAddItem}
+            onRefreshMenuItems={refreshMenuItems}
+            onNotify={showToast}
+            isCustomer={isCustomer}
           />
         )}
 
-        {currentSection === "cart" && (
+        {activeTab === "cart" && (
           <CartSection
-            role={role}
-            selectedTableId={selectedTableId}
-            selectedTableName={
-              selectedTable?.name ||
-              activeCustomerOrder?.customerName ||
-              activeCustomerOrder?.orderNumber ||
-              ""
-            }
-            currentOrder={activeOrderState.current}
-            pendingOrder={activeOrderState.pending}
-            onAddItemToPending={handleAddCurrentItemToPending}
-            onIncreasePending={handleIncreasePending}
-            onDecreasePending={handleDecreasePending}
-            onRemovePending={handleRemovePending}
-            onSendPending={handleSendPending}
+            pendingItems={pendingItems}
+            currentItems={currentItems}
+            subtotal={subtotal}
+            tax={tax}
+            total={total}
+            taxRate={TAX_RATE}
             activeOrder={activeOrder}
-            taxRate={TAX_RATE}
-            onCheckout={handleCheckoutOrder}
-            onNotify={showNotification}
+            onIncrease={handleIncrease}
+            onDecrease={handleDecrease}
+            onRemove={handleRemove}
+            onAddNote={handleAddCartItemNote}
+            onUpdateNote={handleUpdateCartItemNote}
+            onDeleteNote={handleDeleteCartItemNote}
+            onSend={handleSend}
+            onRefresh={handleRefreshCartSection}
+            onCheckout={handleCheckout}
+            onNotify={showToast}
+            paymentMethod={paymentMethod}
+            setPaymentMethod={setPaymentMethod}
+            tips={tips}
+            setTips={setTips}
+            isCustomer={isCustomer}
           />
         )}
 
-        {currentSection === "order" && (isAdmin || isWaiterLike) && (
-          <OrderSection
-            orders={effectiveOrders}
-            currentUserName={mockUser.name}
-            onSaveOrder={handleSaveOrder}
-            onSendPendingForOrder={handleSendPendingForOrder}
-            onDeletePendingDishes={handleDeletePendingDishes}
-            onOpenOrderInMenu={handleOpenOrderInMenu}
-            onCheckout={handleCheckoutOrder}
-            taxRate={TAX_RATE}
-            onRequestDiningAssignment={(order) => {
-              if (!order) return;
-              setPendingDiningSwitchOrderId(order.id);
-              setDiningAssignmentSource("order-details");
-              setQueuedDiningItem(null);
-              setSelectedTableId(null);
-              setActiveCustomerOrderId(order.id);
-              setServiceMode("dining");
-              setReopenOrderDetailsId(order.id);
-              setActiveSection("tables");
+        {activeTab === "orders" && (
+          <OrdersSection
+            onOrderUpdated={handleOrderUpdated}
+            onNotify={showToast}
+            refreshKey={ordersRefreshKey}
+          />
+        )}
+        {activeTab === "kitchen" && (
+          <KitchenSection
+            items={kitchenItems}
+            recentlyFinishedItems={recentlyFinishedItems}
+            onFinish={handleFinishKitchenItem}
+            onRevertFinish={handleRevertFinishedKitchenItem}
+            onRefresh={async () => {
+              try {
+                await refreshKitchen(null);
+                showToast("Kitchen refreshed");
+              } catch (err) {
+                console.error("refresh kitchen failed:", err);
+                showToast("Failed to refresh kitchen", "error");
+              }
             }}
-            autoOpenOrderId={reopenOrderDetailsId}
-            onAutoOpenOrderHandled={() => setReopenOrderDetailsId(null)}
           />
         )}
-
-        {currentSection === "report" && isAdmin && (<ReportSection orders={orders} />)}
-
-        {currentSection === "kitchen" && isKitchen && <KitchenSection 
-            orders={orders}
-            onToggleDishFinished={handleToggleDishFinished}
-        />}
+        {activeTab === "report" && isAdmin && (
+          <ReportSection
+            onNotify={showToast}
+            refreshKey={reportRefreshKey}
+          />
+        )}
       </main>
+
+      {editingTable && (
+        <div style={modalStyles.overlay}>
+          <div style={modalStyles.modal}>
+            <h3>Edit Table</h3>
+
+            <input
+              placeholder="Label"
+              value={editingTable.label || ""}
+              onChange={(e) =>
+                setEditingTable({ ...editingTable, label: e.target.value })
+              }
+            />
+
+            <input
+              type="number"
+              placeholder="Seat"
+              value={editingTable.seat || 1}
+              onChange={(e) =>
+                setEditingTable({ ...editingTable, seat: e.target.value })
+              }
+            />
+
+            <select
+              value={editingTable.tableStatus}
+              onChange={(e) =>
+                setEditingTable({
+                  ...editingTable,
+                  tableStatus: e.target.value,
+                })
+              }
+            >
+              <option value="AVAILABLE">Available</option>
+              <option value="RESERVED">Reserved</option>
+              <option value="OCCUPIED">Occupied</option>
+            </select>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={async () => {
+                  await handleUpdateTable({
+                    ...editingTable,
+                    seat: Number(editingTable.seat),
+                  });
+                  setEditingTable(null);
+                }}
+              >
+                Save
+              </button>
+
+              <button onClick={() => setEditingTable(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
+const modalStyles = {
+  overlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.4)",
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 9999,
+  },
+  modal: {
+    background: "white",
+    padding: 24,
+    borderRadius: 12,
+    width: 300,
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+  },
+};
+
 const styles = {
   page: {
-    minHeight: "100vh",
+    padding: 24,
+    fontFamily: "Arial, sans-serif",
     background: "#f3f4f6",
+    minHeight: "100vh",
   },
+
   header: {
-    position: "relative",
-    padding: "24px 28px 14px",
-    background: "#ffffff",
-    borderBottom: "1px solid #e5e7eb",
-  },
-  headerRow: {
+    background: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: 18,
+    padding: 20,
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "20px",
-    flexWrap: "wrap",
+    alignItems: "center",
+    marginBottom: 16,
   },
-  headerLeft: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
+
   title: {
     margin: 0,
-    fontSize: "32px",
-    color: "#111827",
+    fontSize: 32,
+    fontWeight: 800,
   },
+
   subtitle: {
-    margin: 0,
+    margin: "6px 0 0",
     color: "#6b7280",
   },
-  userText: {
-    margin: 0,
-    color: "#374151",
-    fontWeight: 600,
-  },
-  servicePanel: {
-    marginLeft: "auto",
+
+  userBox: {
     display: "flex",
     alignItems: "center",
-    gap: "16px",
-    padding: "14px 16px",
-    borderRadius: "18px",
-    background: "#f9fafb",
-    border: "2px solid #2563eb",
-    boxShadow: "0 2px 6px rgba(0, 0, 0, 0.04)",
-    minWidth: "320px",
-    justifyContent: "space-between",
-    cursor: "pointer",
-  },
-  serviceTextBlock: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "4px",
-  },
-  serviceLabel: {
-    fontSize: "12px",
-    fontWeight: 700,
-    textTransform: "uppercase",
-    letterSpacing: "0.08em",
-    color: "#6b7280",
-  },
-  serviceOrderNumber: {
-    fontSize: "24px",
-    lineHeight: 1.1,
-    color: "#111827",
-  },
-  serviceMeta: {
-    fontSize: "14px",
-    color: "#4b5563",
-  },
-  serviceTypeSelect: {
-    minWidth: "140px",
-    padding: "12px 14px",
-    borderRadius: "12px",
-    border: "1px solid #d1d5db",
-    background: "#ffffff",
-    fontWeight: 700,
-    fontSize: "15px",
-    color: "#111827",
-    cursor: "pointer",
-  },
-  notification: {
-    position: "absolute",
-    top: "50%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    zIndex: 20,
-    minWidth: "280px",
-    maxWidth: "420px",
-    padding: "14px 18px",
-    borderRadius: "14px",
-    color: "#ffffff",
-    fontWeight: 700,
-    textAlign: "center",
-    boxShadow: "0 14px 30px rgba(0, 0, 0, 0.18)",
-  },
-  notificationSuccess: {
-    background: "#16a34a",
-  },
-  notificationError: {
-    background: "#dc2626",
-  },
-  nav: {
-    display: "flex",
-    gap: "12px",
-    padding: "16px 28px",
-    background: "#ffffff",
-    borderBottom: "1px solid #e5e7eb",
+    gap: 14,
     flexWrap: "wrap",
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: "10px 12px",
   },
-  navButton: {
-    border: "1px solid #d1d5db",
-    background: "#ffffff",
-    color: "#111827",
-    padding: "14px 22px",
-    borderRadius: "14px",
-    cursor: "pointer",
+
+  contextBox: {
+    borderRight: "1px solid #e5e7eb",
+    paddingRight: 14,
+    minWidth: 86,
+  },
+
+  contextLabel: {
+    display: "block",
+    color: "#6b7280",
+    fontSize: 11,
+    fontWeight: 900,
+    textTransform: "uppercase",
+  },
+
+  contextSub: {
+    display: "block",
+    marginTop: 2,
+    color: "#6b7280",
+    fontSize: 12,
     fontWeight: 700,
-    fontSize: "16px",
-    minWidth: "110px",
   },
-  navButtonActive: {
+
+  role: {
+    fontSize: 12,
+    color: "#6b7280",
+    fontWeight: 700,
+  },
+
+  logoutButton: {
+    border: "none",
     background: "#111827",
-    color: "#ffffff",
-    border: "1px solid #111827",
-    transform: "scale(1.05)",
+    color: "white",
+    padding: "9px 12px",
+    borderRadius: 10,
+    fontWeight: 700,
+    cursor: "pointer",
   },
+
+  tabs: {
+    display: "flex",
+    gap: 10,
+    background: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: 16,
+    padding: 10,
+    marginBottom: 20,
+  },
+
+  tabButton: {
+    border: "none",
+    background: "transparent",
+    padding: "11px 18px",
+    borderRadius: 12,
+    fontWeight: 800,
+    color: "#374151",
+    cursor: "pointer",
+  },
+
+  activeTab: {
+    background: "#111827",
+    color: "white",
+  },
+
   content: {
-    padding: "24px 28px",
+    background: "white",
+    border: "1px solid #e5e7eb",
+    borderRadius: 18,
+    padding: 20,
   },
 };
 

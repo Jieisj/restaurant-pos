@@ -1,17 +1,17 @@
 package com.jie.restaurant_pos.dto;
 
 import com.jie.restaurant_pos.enums.Role;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
-import lombok.Setter;
 
-@Setter
 @Getter
-public class CreateUserRequest {
+@AllArgsConstructor
+public class LoginResponse {
+    private Long id;
     private String username;
-
-    private String password;
-
     private Role role;
-
     private Long tableId;
+    private String tableLabel;
+    private Short tableSeat;
+    private String token;
 }

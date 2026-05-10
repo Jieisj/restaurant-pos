@@ -33,9 +33,10 @@ public class RestaurantTableController {
     @PutMapping("/{id}")
     public RestaurantTable updateTable(
             @PathVariable Long id,
+            @RequestParam Long userId,
             @RequestBody RestaurantTable table
     ) {
-        return service.updateTable(id, table);
+        return service.updateTable(id, userId, table);
     }
 
     @DeleteMapping("/{id}")

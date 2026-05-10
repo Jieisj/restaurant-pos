@@ -1,6 +1,7 @@
 package com.jie.restaurant_pos.controller;
 
 import com.jie.restaurant_pos.entity.CartItem;
+import com.jie.restaurant_pos.entity.CartItemNote;
 import com.jie.restaurant_pos.service.CartItemService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -17,6 +18,16 @@ public class CartItemController {
     @GetMapping
     public List<CartItem> getAllCartItems() {
         return cartItemService.getAllCartItems();
+    }
+
+    @GetMapping("/notFinished")
+    public List<CartItem> getAllNotFinishedItems() {
+        return cartItemService.getAllNotFinishedItems();
+    }
+
+    @GetMapping("/order/{orderId}/notFinished")
+    public List<CartItem> getNotFinishedByTableId(@PathVariable Long orderId){
+        return cartItemService.getNotFinishedItemsByOrderId(orderId);
     }
 
     @GetMapping("/{id}")
@@ -52,8 +63,39 @@ public class CartItemController {
         return cartItemService.finishCartItem(id);
     }
 
+    @PutMapping("/{id}/revert-finish")
+    public CartItem revertFinishedCartItem(@PathVariable Long id) {
+        return cartItemService.revertFinishedCartItem(id);
+    }
+
     @DeleteMapping("/{id}")
     public void deleteCartItem(@PathVariable Long id) {
         cartItemService.deleteCartItem(id);
+    }
+
+    @GetMapping("/{cartItemId}/notes")
+    public List<CartItemNote> getCartItemNotes(@PathVariable Long cartItemId) {
+        return cartItemService.getCartItemNotes(cartItemId);
+    }
+
+    @PostMapping("/{cartItemId}/notes")
+    public CartItemNote createCartItemNote(
+            @PathVariable Long cartItemId,
+            @RequestBody CartItemNote note
+    ) {
+        return cartItemService.createCartItemNote(cartItemId, note);
+    }
+
+    @PutMapping("/notes/{noteId}")
+    public CartItemNote updateCartItemNote(
+            @PathVariable Long noteId,
+            @RequestBody CartItemNote note
+    ) {
+        return cartItemService.updateCartItemNote(noteId, note);
+    }
+
+    @DeleteMapping("/notes/{noteId}")
+    public void deleteCartItemNote(@PathVariable Long noteId) {
+        cartItemService.deleteCartItemNote(noteId);
     }
 }

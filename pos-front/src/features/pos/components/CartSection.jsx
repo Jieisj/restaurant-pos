@@ -1,1076 +1,1210 @@
-import { useMemo, useState } from "react";
-import { ROLES } from "../../../constants/roles";
+import { useState } from "react";
 
-function roundToTwo(value) {
-  return Math.round((Number(value) || 0) * 100) / 100;
+function money(value) {
+  return `$${Number(value || 0).toFixed(2)}`;
 }
 
-function formatMoney(value) {
-  return roundToTwo(value).toFixed(2);
+function roundMoney(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
 }
 
 function isValidMoneyInput(value) {
   return /^\d*(\.\d{0,2})?$/.test(value);
 }
 
-function sanitizeMoneyInput(value, fallback = "0.00") {
-  const normalized = String(value ?? "").trim();
-  if (normalized === "" || normalized === ".") return fallback;
-  return formatMoney(normalized);
-}
-
 function buildCashShortcuts(amountDue) {
-  const exact = roundToTwo(amountDue);
-  const nextDollar = Math.ceil(exact);
-  const nextTen = Math.ceil(exact / 10) * 10;
-  const nextHundred = Math.ceil(exact / 100) * 100;
+  const roundedDue = roundMoney(amountDue);
+  const nextDollar = Math.ceil(roundedDue);
+  const nextTen = Math.ceil(roundedDue / 10) * 10;
+  const billOptions = [20, 50, 100, 200].filter((value) => value > roundedDue);
 
-  return [exact, nextDollar, nextTen, nextHundred]
-    .map((value) => roundToTwo(value))
-    .filter((value, index, array) => array.indexOf(value) === index)
-    .sort((a, b) => a - b);
+  return [nextDollar, nextTen, ...billOptions]
+    .filter((value) => value >= roundedDue)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 5);
 }
 
-function CheckoutModal({
-  order,
-  itemCount,
-  subtotal,
-  tax,
-  total,
-  onClose,
-  onConfirm,
-  onNotify,
-}) {
-  const [payment, setPayment] = useState(order?.payment === "card" ? "card" : "cash");
-  const [cardType, setCardType] = useState(
-    order?.payment === "card" ? order?.cardType || "visa" : "visa"
-  );
-  const [cashReceived, setCashReceived] = useState("");
-  const [tips, setTips] = useState(
-    order?.tips !== undefined && order?.tips !== null
-      ? formatMoney(order.tips)
-      : "0.00"
-  );
+function itemName(item) {
+  return item.nameSnapshot || item.name || "Menu item";
+}
 
-  const parsedCash = roundToTwo(cashReceived || 0);
-  const parsedTips = roundToTwo(tips || 0);
-  const amountDue = roundToTwo(total + parsedTips);
-  const change = payment === "cash" ? roundToTwo(parsedCash - amountDue) : 0;
-  const cashShortcuts = useMemo(() => buildCashShortcuts(amountDue), [amountDue]);
+function itemPrice(item) {
+  return Number(item.priceSnapshot ?? item.price ?? 0);
+}
 
-  const handleTipsChange = (value) => {
-    if (!isValidMoneyInput(value)) return;
-    setTips(value);
-  };
-
-  const handleCashChange = (value) => {
-    if (!isValidMoneyInput(value)) return;
-    setCashReceived(value);
-  };
-
-  const handleConfirm = () => {
-    if (!order) return;
-
-    const hasInsufficientCash =
-      payment === "cash" && (Number.isNaN(parsedCash) || parsedCash < amountDue);
-    const hasInvalidCard =
-      payment === "card" && (!cardType || cardType === "none");
-
-    if (hasInsufficientCash || hasInvalidCard) {
-      const errorMessage = hasInsufficientCash
-        ? "Not enough cash to cover this order."
-        : "Card payment could not be completed.";
-
-      onClose?.();
-
-      if (typeof window !== "undefined") {
-        window.setTimeout(() => {
-          onNotify?.(errorMessage, "error");
-        }, 0);
-      } else {
-        onNotify?.(errorMessage, "error");
-      }
-
-      return;
-    }
-
-    onConfirm?.({
-      payment,
-      cardType: payment === "card" ? cardType || "visa" : "none",
-      tips: parsedTips,
-      cashReceived: payment === "cash" ? parsedCash : 0,
-      change: payment === "cash" ? change : 0,
-    });
-    onClose?.();
-  };
-
-  const handlePrint = () => {
-    if (typeof window !== "undefined" && typeof window.print === "function") {
-      window.print();
-    }
-  };
-
-  return (
-    <div style={styles.overlay}>
-      <div style={styles.checkoutModal}>
-        <div style={styles.modalHeader}>
-          <div>
-            <h2 style={styles.modalTitle}>Checkout</h2>
-            <p style={styles.modalSubtitle}>
-              {order?.orderNumber || "Current Order"} • {order?.type || "order"}
-            </p>
-          </div>
-
-          <button type="button" onClick={onClose} style={styles.closeButton}>
-            ×
-          </button>
-        </div>
-
-        <div style={styles.checkoutSummary}>
-          <div style={styles.summaryRow}>
-            <span>Items</span>
-            <strong>{itemCount}</strong>
-          </div>
-          <div style={styles.summaryRow}>
-            <span>Subtotal</span>
-            <strong>${formatMoney(subtotal)}</strong>
-          </div>
-          <div style={styles.summaryRow}>
-            <span>Tax</span>
-            <strong>${formatMoney(tax)}</strong>
-          </div>
-          <div style={styles.summaryRow}>
-            <span>Total</span>
-            <strong>${formatMoney(total)}</strong>
-          </div>
-        </div>
-
-        <div style={styles.sectionBlock}>
-          <div style={styles.sectionLabel}>Payment</div>
-          <div style={styles.choiceRow}>
-            <button
-              type="button"
-              onClick={() => setPayment("cash")}
-              style={{
-                ...styles.choiceButton,
-                ...(payment === "cash" ? styles.choiceButtonActive : {}),
-              }}
-            >
-              Cash
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setPayment("card");
-                if (!cardType || cardType === "none") setCardType("visa");
-              }}
-              style={{
-                ...styles.choiceButton,
-                ...(payment === "card" ? styles.choiceButtonActive : {}),
-              }}
-            >
-              Card
-            </button>
-          </div>
-        </div>
-
-        {payment === "card" && (
-          <div style={styles.sectionBlock}>
-            <div style={styles.sectionLabel}>Card Type</div>
-            <div style={styles.choiceGridFive}>
-              {[
-                ["visa", "Visa"],
-                ["mastercard", "Mastercard"],
-                ["amex", "Amex"],
-                ["discover", "Discover"],
-                ["others", "Others"],
-              ].map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setCardType(value)}
-                  style={{
-                    ...styles.choiceButton,
-                    ...(cardType === value ? styles.choiceButtonActive : {}),
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div style={styles.formGrid}>
-          <label style={styles.fieldGroup}>
-            <span style={styles.fieldLabel}>Tips</span>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={tips}
-              onChange={(e) => handleTipsChange(e.target.value)}
-              onBlur={() => setTips((prev) => sanitizeMoneyInput(prev))}
-              onFocus={(e) => e.target.select()}
-              onClick={(e) => e.target.select()}
-              style={styles.input}
-            />
-          </label>
-
-          {payment === "cash" ? (
-            <label style={styles.fieldGroup}>
-              <span style={styles.fieldLabel}>Cash Received</span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={cashReceived}
-                onChange={(e) => handleCashChange(e.target.value)}
-                onBlur={() => setCashReceived((prev) => sanitizeMoneyInput(prev, ""))}
-                onFocus={(e) => e.target.select()}
-                onClick={(e) => e.target.select()}
-                style={styles.input}
-                placeholder="0.00"
-              />
-            </label>
-          ) : (
-            <div style={styles.fieldGroup}>
-              <span style={styles.fieldLabel}>Amount Charged</span>
-              <div style={styles.readOnlyValue}>${formatMoney(amountDue)}</div>
-            </div>
-          )}
-        </div>
-
-        {payment === "cash" && (
-          <div style={styles.sectionBlock}>
-            <div style={styles.sectionLabel}>Quick Cash</div>
-            <div style={styles.choiceGrid}>
-              {cashShortcuts.map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setCashReceived(formatMoney(value))}
-                  style={styles.shortcutButton}
-                >
-                  ${formatMoney(value)}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div style={styles.checkoutSummary}>
-          <div style={styles.summaryRow}>
-            <span>Tips</span>
-            <strong>${formatMoney(parsedTips)}</strong>
-          </div>
-          <div style={styles.summaryRow}>
-            <span>{payment === "cash" ? "Change" : "Charge Total"}</span>
-            <strong>
-              {payment === "cash"
-                ? change < 0
-                  ? `-$${formatMoney(Math.abs(change))}`
-                  : `$${formatMoney(change)}`
-                : `$${formatMoney(amountDue)}`}
-            </strong>
-          </div>
-        </div>
-
-        <div style={styles.modalFooter}>
-          <button type="button" onClick={onClose} style={styles.secondaryButton}>
-            Cancel
-          </button>
-          <button type="button" onClick={handlePrint} style={styles.printButton}>
-            Print
-          </button>
-          <button type="button" onClick={handleConfirm} style={styles.primaryButton}>
-            Confirm Checkout
-          </button>
-        </div>
-      </div>
-    </div>
+function itemNotesTotal(item) {
+  return (item.notes || []).reduce(
+    (sum, note) => sum + Number(note.price || 0),
+    0,
   );
 }
 
-function CartSection({
-  role,
-  selectedTableId,
-  selectedTableName,
-  currentOrder = [],
-  pendingOrder = [],
-  onAddItemToPending,
-  onIncreasePending,
-  onDecreasePending,
-  onRemovePending,
-  onSendPending,
-  activeOrder = null,
-  taxRate = 0.1,
-  onCheckout,
-  onNotify,
+function itemTotal(item) {
+  return (itemPrice(item) + itemNotesTotal(item)) * Number(item.quantity || 0);
+}
+
+function CartItemRow({
+  item,
+  canEdit,
+  canManageNotes,
+  statusLabel,
+  noteDrafts,
+  setNoteDrafts,
+  onIncrease,
+  onDecrease,
+  onRemove,
+  onAddNote,
+  onUpdateNote,
+  onDeleteNote,
 }) {
-  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
-  const [showTimes, setShowTimes] = useState(true);
-  const isCustomer = role === ROLES.CUSTOMER;
+  const [showNotes, setShowNotes] = useState(false);
+  const newNoteKey = `new-note-${item.id}`;
+  const newPriceKey = `new-price-${item.id}`;
+  const newNote = noteDrafts[newNoteKey] ?? "";
+  const newPrice = noteDrafts[newPriceKey] ?? "0.00";
 
-  const getItemIdentity = (item) => {
-    const modifiers = item.selectedModifiers || {};
-    const add = modifiers.add || [];
-    const no = modifiers.no || [];
-    const switchPair = modifiers.switchPair || null;
-
-    return JSON.stringify({
-      id: item.id,
-      add,
-      no,
-      switchPair,
-    });
-  };
-
-  
-  const renderModifierDetails = (item) => {
-    const modifiers = item.selectedModifiers;
-    if (!modifiers) return null;
-
-    const elements = [];
-
-    if (modifiers.add?.length) {
-      modifiers.add.forEach((m, i) => {
-        elements.push(
-          <span key={`add-${i}`} style={styles.modifierInline}>
-            <span style={styles.modAdd}>+</span> {m}
-          </span>
-        );
-      });
-    }
-
-    if (modifiers.no?.length) {
-      modifiers.no.forEach((m, i) => {
-        elements.push(
-          <span key={`no-${i}`} style={styles.modifierInline}>
-            <span style={styles.modNo}>-</span> {m}
-          </span>
-        );
-      });
-    }
-
-    if (modifiers.switchPair) {
-      elements.push(
-        <span key="switch" style={styles.modifierInline}>
-          <span style={styles.modSwitch}>⇄</span>{" "}
-          {modifiers.switchPair.from} → {modifiers.switchPair.to}
-        </span>
-      );
-    }
-
-    if (!elements.length) return null;
-
-    return <div style={styles.modifierInlineWrap}>{elements}</div>;
-  };
-
-
-  const currentSubtotal = useMemo(() => {
-    return roundToTwo(
-      currentOrder.reduce((sum, item) => sum + item.price * item.quantity, 0)
-    );
-  }, [currentOrder]);
-
-  const pendingSubtotal = useMemo(() => {
-    return roundToTwo(
-      pendingOrder.reduce((sum, item) => sum + item.price * item.quantity, 0)
-    );
-  }, [pendingOrder]);
-
-  const checkoutSubtotal = useMemo(() => {
-    return roundToTwo(currentSubtotal + pendingSubtotal);
-  }, [currentSubtotal, pendingSubtotal]);
-
-  const currentTax = useMemo(() => {
-    return roundToTwo(currentSubtotal * taxRate);
-  }, [currentSubtotal, taxRate]);
-
-  const checkoutTax = useMemo(() => {
-    return roundToTwo(checkoutSubtotal * taxRate);
-  }, [checkoutSubtotal, taxRate]);
-
-  const currentTotal = useMemo(() => {
-    return roundToTwo(currentSubtotal + currentTax);
-  }, [currentSubtotal, currentTax]);
-
-  const checkoutTotal = useMemo(() => {
-    return roundToTwo(checkoutSubtotal + checkoutTax);
-  }, [checkoutSubtotal, checkoutTax]);
-
-  const pendingTotal = useMemo(() => pendingSubtotal, [pendingSubtotal]);
-
-  const currentItemsCount = useMemo(() => {
-    return currentOrder.reduce((sum, item) => sum + item.quantity, 0);
-  }, [currentOrder]);
-
-  const pendingItemsCount = useMemo(() => {
-    return pendingOrder.reduce((sum, item) => sum + item.quantity, 0);
-  }, [pendingOrder]);
-
-  const checkoutItemsCount = useMemo(() => {
-    return currentItemsCount + pendingItemsCount;
-  }, [currentItemsCount, pendingItemsCount]);
+  function getNoteDraft(note, field) {
+    const key = `${field}-${note.id}`;
+    return noteDrafts[key] ?? (field === "price" ? String(Number(note.price || 0).toFixed(2)) : note.note || "");
+  }
 
   return (
-    <div style={styles.wrapper}>
-      <div style={styles.header}>
-        <div style={styles.headerRow}>
-          <div>
-            <h2 style={styles.title}>Cart</h2>
-            <p style={styles.subtitle}>
-              {selectedTableId
-                ? `${selectedTableName || `Table ${selectedTableId}`}`
-                : activeOrder?.orderNumber && ["to-go", "delivery"].includes(activeOrder?.type)
-                ? `${activeOrder.orderNumber} • ${
-                    activeOrder.type === "to-go" ? "To-Go" : "Delivery"
-                  }`
-                : isCustomer
-                ? "Review your current and pending order."
-                : "No table selected"}
-            </p>
+    <div style={styles.itemRow}>
+      <div style={styles.itemRowTop}>
+        <div style={styles.itemMain}>
+          <div style={styles.itemTopLine}>
+            <strong style={styles.itemName}>{itemName(item)}</strong>
+            <span
+              style={
+                canEdit
+                  ? styles.pendingPill
+                  : statusLabel === "Finished"
+                    ? styles.finishedPill
+                    : styles.preparingPill
+              }
+            >
+              {statusLabel}
+            </span>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setShowTimes((prev) => !prev)}
-            style={{
-              ...styles.timeToggleButton,
-              ...(showTimes ? styles.timeToggleButtonActive : {}),
-            }}
-          >
-            {showTimes ? "Hide Time" : "Show Time"}
-          </button>
+          <div style={styles.itemMeta}>
+            {money(itemPrice(item))} x {item.quantity}
+            {itemNotesTotal(item) > 0 ? ` + ${money(itemNotesTotal(item))} notes` : ""}
+          </div>
         </div>
-      </div>
 
-      <div style={styles.grid}>
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>
-            <div>
-              <h3 style={styles.panelTitle}>Current Order</h3>
-            </div>
-          </div>
+        <div style={styles.itemRight}>
+          <strong>{money(itemTotal(item))}</strong>
 
-          {currentOrder.length === 0 ? (
-            <div style={styles.emptyState}>No items in the current order.</div>
-          ) : (
-            <div style={styles.list}>
-              {currentOrder.map((item, index) => (
-                <div
-                  key={`${getItemIdentity(item)}-${index}`}
-                  style={{
-                    ...styles.itemCard,
-                    ...(item.kitchenFinished ? styles.itemCardFinished : {}),
-                  }}
-                >
-                  <div style={styles.itemContent}>
-                    <div style={styles.itemTitleRow}>
-                      <h4 style={styles.itemName}>{item.name}</h4>
-
-                      <span
-                        style={{
-                          ...styles.kitchenCheck,
-                          ...(item.kitchenFinished ? styles.kitchenCheckActive : {}),
-                        }}
-                        title={
-                          item.kitchenFinished
-                            ? "Finished by kitchen"
-                            : "Still preparing in kitchen"
-                        }
-                      >
-                        ✓
-                      </span>
-                    </div>
-
-                    <p style={styles.itemMeta}>
-                      ${formatMoney(item.price)} × {item.quantity}
-                    </p>
-                    {showTimes && item.sentTime ? (
-                      <p style={styles.timeText}>Sent to kitchen: {item.sentTime}</p>
-                    ) : null}
-                    {renderModifierDetails(item)}
-                  </div>
-
-                  <div style={styles.itemActions}>
-                    <button
-                      type="button"
-                      style={styles.plusButton}
-                      onClick={() => onAddItemToPending?.(item)}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div style={styles.summaryBox}>
-            <div style={styles.summaryRow}>
-              <span>Total Items</span>
-              <strong>{currentItemsCount}</strong>
-            </div>
-            <div style={styles.summaryRow}>
-              <span>Subtotal</span>
-              <strong>${formatMoney(currentSubtotal)}</strong>
-            </div>
-            <div style={styles.summaryRow}>
-              <span>Tax</span>
-              <strong>${formatMoney(currentTax)}</strong>
-            </div>
-            <div style={styles.summaryRow}>
-              <span>Total</span>
-              <strong>${formatMoney(currentTotal)}</strong>
-            </div>
-
-            <div style={styles.checkoutButtonWrap}>
+          {canEdit && (
+            <div style={styles.qtyControls}>
               <button
                 type="button"
-                style={{
-                  ...styles.checkoutButton,
-                  ...(currentOrder.length === 0 && pendingOrder.length === 0
-                    ? styles.sendButtonDisabled
-                    : {}),
-                }}
-                onClick={() => setShowCheckoutModal(true)}
-                disabled={
-                  (currentOrder.length === 0 && pendingOrder.length === 0) ||
-                  !activeOrder
-                }
+                aria-label={`Decrease ${itemName(item)}`}
+                style={styles.qtyButton}
+                onClick={() => onDecrease(item)}
               >
-                Checkout
+                -
+              </button>
+              <span style={styles.qty}>{item.quantity}</span>
+              <button
+                type="button"
+                aria-label={`Increase ${itemName(item)}`}
+                style={styles.qtyButton}
+                onClick={() => onIncrease(item)}
+              >
+                +
+              </button>
+              {canManageNotes && (
+                <button
+                  type="button"
+                  style={styles.noteButton}
+                  onClick={() => setShowNotes((value) => !value)}
+                >
+                  Notes
+                </button>
+              )}
+              <button
+                type="button"
+                style={styles.removeButton}
+                onClick={() => onRemove(item)}
+              >
+                Remove
               </button>
             </div>
-          </div>
-        </section>
-
-        <section style={styles.panel}>
-          <div style={styles.panelHeader}>
-            <div>
-              <h3 style={styles.panelTitle}>Pending Order</h3>
-            </div>
-
-            <button
-              type="button"
-              style={{
-                ...styles.sendButton,
-                ...(pendingOrder.length === 0 ? styles.sendButtonDisabled : {}),
-              }}
-              onClick={onSendPending}
-              disabled={pendingOrder.length === 0}
-            >
-              Send
-            </button>
-          </div>
-
-          {pendingOrder.length === 0 ? (
-            <div style={styles.emptyState}>No items in the pending order.</div>
-          ) : (
-            <div style={styles.list}>
-              {pendingOrder.map((item, index) => (
-                <div key={`${getItemIdentity(item)}-${index}`} style={styles.itemCard}>
-                  <div style={styles.itemContent}>
-                    <h4 style={styles.itemName}>{item.name}</h4>
-                    <p style={styles.itemMeta}>
-                      ${formatMoney(item.price)} × {item.quantity}
-                    </p>
-                    {showTimes && item.addedTime ? (
-                      <p style={styles.timeText}>Added to pending: {item.addedTime}</p>
-                    ) : null}
-                    {renderModifierDetails(item)}
-                  </div>
-
-                  <div style={styles.itemActions}>
-                    <button
-                      type="button"
-                      style={styles.smallButton}
-                      onClick={() => onDecreasePending?.(item)}
-                    >
-                      -
-                    </button>
-
-                    <span style={styles.qtyText}>{item.quantity}</span>
-
-                    <button
-                      type="button"
-                      style={styles.plusButton}
-                      onClick={() => onIncreasePending?.(item)}
-                    >
-                      +
-                    </button>
-
-                    <button
-                      type="button"
-                      style={styles.removeButton}
-                      onClick={() => onRemovePending?.(item)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
           )}
-
-          <div style={styles.summaryBox}>
-            <div style={styles.summaryRow}>
-              <span>Total Items</span>
-              <strong>{pendingItemsCount}</strong>
-            </div>
-            <div style={styles.summaryRow}>
-              <span>Total Price</span>
-              <strong>${formatMoney(pendingTotal)}</strong>
-            </div>
-          </div>
-        </section>
+        </div>
       </div>
 
-      {showCheckoutModal && activeOrder && (
-        <CheckoutModal
-          order={activeOrder}
-          itemCount={checkoutItemsCount}
-          subtotal={checkoutSubtotal}
-          tax={checkoutTax}
-          total={checkoutTotal}
-          onClose={() => setShowCheckoutModal(false)}
-          onConfirm={(payload) => onCheckout?.(activeOrder.id, payload)}
-          onNotify={onNotify}
-        />
+      {canEdit && canManageNotes && showNotes && (
+        <div style={styles.notesPanel}>
+          {(item.notes || []).length === 0 ? (
+            <p style={styles.emptyNote}>No notes yet.</p>
+          ) : (
+            (item.notes || []).map((note) => {
+              const noteValue = getNoteDraft(note, "note");
+              const priceValue = getNoteDraft(note, "price");
+
+              return (
+                <div key={note.id} style={styles.noteRow}>
+                  <input
+                    value={noteValue}
+                    onChange={(e) =>
+                      setNoteDrafts({
+                        ...noteDrafts,
+                        [`note-${note.id}`]: e.target.value,
+                      })
+                    }
+                    style={styles.noteInput}
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={priceValue}
+                    onChange={(e) => {
+                      if (!isValidMoneyInput(e.target.value)) return;
+
+                      setNoteDrafts({
+                        ...noteDrafts,
+                        [`price-${note.id}`]: e.target.value,
+                      })
+                    }}
+                    style={styles.notePriceInput}
+                  />
+                  <button
+                    type="button"
+                    style={styles.noteSaveButton}
+                    onClick={() =>
+                      onUpdateNote(item, note.id, {
+                        note: noteValue,
+                        price: Number(priceValue) || 0,
+                      })
+                    }
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.noteDeleteButton}
+                    onClick={() => onDeleteNote(item, note.id)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              );
+            })
+          )}
+
+          <div style={styles.noteRow}>
+            <input
+              value={newNote}
+              placeholder="Kitchen note or addition"
+              onChange={(e) =>
+                setNoteDrafts({ ...noteDrafts, [newNoteKey]: e.target.value })
+              }
+              style={styles.noteInput}
+            />
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={newPrice}
+              onChange={(e) => {
+                if (!isValidMoneyInput(e.target.value)) return;
+
+                setNoteDrafts({ ...noteDrafts, [newPriceKey]: e.target.value })
+              }}
+              style={styles.notePriceInput}
+            />
+            <button
+              type="button"
+              style={styles.noteSaveButton}
+              onClick={async () => {
+                if (!newNote.trim()) return;
+                await onAddNote(item, {
+                  note: newNote.trim(),
+                  price: Number(newPrice) || 0,
+                });
+                setNoteDrafts({
+                  ...noteDrafts,
+                  [newNoteKey]: "",
+                  [newPriceKey]: "0.00",
+                });
+              }}
+            >
+              Add
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
 }
 
+function CartSection({
+  pendingItems,
+  currentItems,
+  subtotal,
+  tax,
+  total,
+  taxRate,
+  activeOrder,
+  onIncrease,
+  onDecrease,
+  onRemove,
+  onAddNote,
+  onUpdateNote,
+  onDeleteNote,
+  onSend,
+  onRefresh,
+  onCheckout,
+  onNotify,
+  paymentMethod,
+  setPaymentMethod,
+  tips,
+  setTips,
+  isCustomer,
+}) {
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [cashReceived, setCashReceived] = useState("");
+  const [cardType, setCardType] = useState("");
+  const [noteDrafts, setNoteDrafts] = useState({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const hasOrder = Boolean(activeOrder?.id);
+  const hasItems = pendingItems.length + currentItems.length > 0;
+  const canSend = pendingItems.length > 0;
+  const canCheckout = hasOrder && hasItems && !isCustomer;
+  const canManageNotes = !isCustomer;
+  const tipAmount = Number(tips) || 0;
+  const amountDue = roundMoney(subtotal + tax + tipAmount);
+  const cashAmount = roundMoney(cashReceived || 0);
+  const changeDue = roundMoney(cashAmount - amountDue);
+  const cashShortcuts = buildCashShortcuts(amountDue);
+
+  function handleOpenCheckout() {
+    setCashReceived("");
+    setCardType("");
+    setPaymentMethod("CASH");
+    setShowCheckoutModal(true);
+  }
+
+  async function handleRefreshCart() {
+    if (!hasOrder || !onRefresh) {
+      onNotify?.("Open a table first", "warning");
+      return;
+    }
+
+    setIsRefreshing(true);
+
+    try {
+      await onRefresh();
+      onNotify?.("Cart refreshed");
+    } catch (err) {
+      console.error("refresh cart failed:", err);
+      onNotify?.("Failed to refresh cart", "error");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+
+  async function handleConfirmCheckout() {
+    if (paymentMethod === "CASH" && cashAmount < amountDue) {
+      onNotify?.("Cash received must cover the amount due", "warning");
+      return;
+    }
+
+    if (paymentMethod === "CARD" && !cardType) {
+      onNotify?.("Select a card type before checkout", "warning");
+      return;
+    }
+
+    try {
+      await onCheckout({
+        transactionMethod: paymentMethod,
+        cardType: paymentMethod === "CARD" ? cardType : "NONE",
+        tips: tipAmount,
+        total: amountDue,
+      });
+      setShowCheckoutModal(false);
+    } catch {
+      // Parent shows the toast; keep the modal open so payment can be fixed.
+    }
+  }
+
+  return (
+    <section style={styles.section}>
+      <div style={styles.header}>
+        <div>
+          <h2 style={styles.title}>Cart</h2>
+          <p style={styles.subtitle}>
+            {hasOrder
+              ? `Order #${activeOrder.id}`
+              : isCustomer
+                ? "Add menu items to start your order"
+                : "Select a table to start an order"}
+          </p>
+        </div>
+
+        <div style={styles.headerActions}>
+          <button
+            type="button"
+            onClick={handleRefreshCart}
+            disabled={!hasOrder || isRefreshing}
+            style={{
+              ...styles.refreshButton,
+              ...(!hasOrder || isRefreshing ? styles.disabledButton : {}),
+            }}
+          >
+            {isRefreshing ? "Refreshing..." : "Refresh"}
+          </button>
+
+          {!isCustomer && (
+            <div style={styles.headerTotals}>
+              <span style={styles.headerTotalLabel}>Due</span>
+              <strong style={styles.headerTotal}>{money(total)}</strong>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={styles.grid}>
+        <div style={styles.panel}>
+          <div style={styles.panelHeader}>
+            <div>
+              <h3 style={styles.panelTitle}>Pending Items</h3>
+              <p style={styles.panelHint}>
+                {isCustomer ? "Editable before placing" : "Editable before sending"}
+              </p>
+            </div>
+            <span style={styles.badge}>{pendingItems.length}</span>
+          </div>
+
+          <div style={styles.itemList}>
+            {pendingItems.length === 0 ? (
+              <p style={styles.empty}>
+                {hasOrder
+                  ? "No pending items."
+                  : isCustomer
+                    ? "Add your first menu item."
+                    : "Open a table first."}
+              </p>
+            ) : (
+              pendingItems.map((item) => (
+                <CartItemRow
+                  key={item.id}
+                  item={item}
+                  canEdit
+                  canManageNotes={canManageNotes}
+                  statusLabel="Pending"
+                  noteDrafts={noteDrafts}
+                  setNoteDrafts={setNoteDrafts}
+                  onIncrease={onIncrease}
+                  onDecrease={onDecrease}
+                  onRemove={onRemove}
+                  onAddNote={onAddNote}
+                  onUpdateNote={onUpdateNote}
+                  onDeleteNote={onDeleteNote}
+                />
+              ))
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onSend}
+            style={{
+              ...styles.sendButton,
+              ...(canSend ? {} : styles.disabledButton),
+            }}
+            disabled={!canSend}
+          >
+            {isCustomer ? "Place Order" : "Send to Kitchen"}
+          </button>
+        </div>
+
+        <div style={styles.panel}>
+          <div style={styles.panelHeader}>
+            <div>
+              <h3 style={styles.panelTitle}>Sent Items</h3>
+              <p style={styles.panelHint}>
+                {isCustomer ? "Locked after placing" : "Locked after kitchen send"}
+              </p>
+            </div>
+            <span style={styles.badge}>{currentItems.length}</span>
+          </div>
+
+          <div style={styles.itemList}>
+            {currentItems.length === 0 ? (
+              <p style={styles.empty}>No sent items.</p>
+            ) : (
+              currentItems.map((item) => (
+                <CartItemRow
+                  key={item.id}
+                  item={item}
+                  canEdit={false}
+                  canManageNotes={false}
+                  statusLabel={
+                    Number(item.isFinished) === 1 ? "Finished" : "Preparing"
+                  }
+                  noteDrafts={noteDrafts}
+                  setNoteDrafts={setNoteDrafts}
+                />
+              ))
+            )}
+          </div>
+        </div>
+
+        <aside style={styles.summary}>
+          <h3 style={styles.summaryTitle}>
+            {isCustomer ? "Subtotal" : "Payment"}
+          </h3>
+
+          <div style={styles.totalBox}>
+            <div style={styles.totalLine}>
+              <span>Subtotal</span>
+              <strong>{money(subtotal)}</strong>
+            </div>
+            {!isCustomer && (
+              <>
+                <div style={styles.totalLine}>
+                  <span>Tax {taxRate ? `(${Math.round(taxRate * 100)}%)` : ""}</span>
+                  <strong>{money(tax)}</strong>
+                </div>
+                <div style={styles.totalLine}>
+                  <span>Tips</span>
+                  <strong>{money(tips)}</strong>
+                </div>
+
+                <div style={styles.grandTotal}>
+                  <span>Total</span>
+                  <strong>{money(total)}</strong>
+                </div>
+              </>
+            )}
+          </div>
+
+          {!isCustomer && (
+            <button
+              type="button"
+              onClick={handleOpenCheckout}
+              style={{
+                ...styles.checkoutButton,
+                ...(canCheckout ? {} : styles.disabledButton),
+              }}
+              disabled={!canCheckout}
+            >
+              Checkout
+            </button>
+          )}
+        </aside>
+      </div>
+
+      {showCheckoutModal && (
+        <div style={styles.overlay}>
+          <div style={styles.checkoutModal}>
+            <div style={styles.modalHeader}>
+              <div>
+                <h2 style={styles.modalTitle}>Checkout</h2>
+                <p style={styles.modalSubtitle}>Order #{activeOrder?.id}</p>
+              </div>
+
+              <button
+                type="button"
+                aria-label="Close checkout"
+                onClick={() => setShowCheckoutModal(false)}
+                style={styles.modalCloseButton}
+              >
+                ×
+              </button>
+            </div>
+
+            <div style={styles.checkoutContent}>
+              <div style={styles.checkoutPanel}>
+                <h3 style={styles.checkoutPanelTitle}>Payment Method</h3>
+
+                <div style={styles.segmentedControl}>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("CASH")}
+                    style={{
+                      ...styles.segmentButton,
+                      ...(paymentMethod === "CASH"
+                        ? styles.segmentButtonActive
+                        : {}),
+                    }}
+                  >
+                    Cash
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod("CARD")}
+                    style={{
+                      ...styles.segmentButton,
+                      ...(paymentMethod === "CARD"
+                        ? styles.segmentButtonActive
+                        : {}),
+                    }}
+                  >
+                    Card
+                  </button>
+                </div>
+
+                {paymentMethod === "CARD" ? (
+                  <div style={styles.cardTypeGrid}>
+                    {[
+                      ["VISA", "Visa"],
+                      ["MASTERCARD", "Mastercard"],
+                      ["AMEX", "Amex"],
+                      ["DISCOVER", "Discover"],
+                      ["OTHERS", "Other"],
+                    ].map(([value, label]) => (
+                      <button
+                        type="button"
+                        key={value}
+                        onClick={() => setCardType(value)}
+                        style={{
+                          ...styles.cardTypeButton,
+                          ...(cardType === value
+                            ? styles.cardTypeButtonActive
+                            : {}),
+                        }}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <label style={styles.label} htmlFor="cash-received">
+                      Cash Received
+                    </label>
+                    <input
+                      id="cash-received"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={cashReceived}
+                      onChange={(e) => {
+                        if (isValidMoneyInput(e.target.value)) {
+                          setCashReceived(e.target.value);
+                        }
+                      }}
+                      style={styles.input}
+                      placeholder="0.00"
+                    />
+
+                    <div style={styles.cashShortcutGrid}>
+                      {cashShortcuts.map((value) => (
+                        <button
+                          type="button"
+                          key={value}
+                          onClick={() => setCashReceived(String(value))}
+                          style={styles.cashShortcutButton}
+                        >
+                          {money(value)}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div style={styles.checkoutPanel}>
+                <h3 style={styles.checkoutPanelTitle}>Order Total</h3>
+
+                <label style={styles.label} htmlFor="checkout-tips">
+                  Tips
+                </label>
+                <input
+                  id="checkout-tips"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={tips}
+                  onChange={(e) => {
+                    if (isValidMoneyInput(e.target.value)) {
+                      setTips(e.target.value);
+                    }
+                  }}
+                  style={styles.input}
+                />
+
+                <div style={styles.totalBox}>
+                  <div style={styles.totalLine}>
+                    <span>Subtotal</span>
+                    <strong>{money(subtotal)}</strong>
+                  </div>
+                  <div style={styles.totalLine}>
+                    <span>Tax</span>
+                    <strong>{money(tax)}</strong>
+                  </div>
+                  <div style={styles.totalLine}>
+                    <span>Tips</span>
+                    <strong>{money(tipAmount)}</strong>
+                  </div>
+                  <div style={styles.grandTotal}>
+                    <span>Amount Due</span>
+                    <strong>{money(amountDue)}</strong>
+                  </div>
+                  {paymentMethod === "CASH" && (
+                    <div style={styles.changeLine}>
+                      <span>Change</span>
+                      <strong>
+                        {cashAmount >= amountDue ? money(changeDue) : "$0.00"}
+                      </strong>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {paymentMethod === "CASH" && cashAmount < amountDue && (
+              <div style={styles.checkoutWarning}>
+                Cash received must cover the amount due.
+              </div>
+            )}
+
+            {paymentMethod === "CARD" && !cardType && (
+              <div style={styles.checkoutWarning}>
+                Select a card type before confirming checkout.
+              </div>
+            )}
+
+            <div style={styles.modalActions}>
+              <button
+                type="button"
+                onClick={() => setShowCheckoutModal(false)}
+                style={styles.secondaryButton}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCheckout}
+                disabled={
+                  (paymentMethod === "CASH" && cashAmount < amountDue) ||
+                  (paymentMethod === "CARD" && !cardType)
+                }
+                style={{
+                  ...styles.primaryButton,
+                  ...((paymentMethod === "CASH" && cashAmount < amountDue) ||
+                  (paymentMethod === "CARD" && !cardType)
+                    ? styles.disabledButton
+                    : {}),
+                }}
+              >
+                Confirm Checkout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 const styles = {
-  wrapper: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "20px",
+  section: {
+    padding: 24,
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    background: "white",
   },
   header: {
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
-    borderRadius: "18px",
-    padding: "20px",
-  },
-  headerRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: "12px",
+    gap: 16,
+    marginBottom: 20,
   },
   title: {
     margin: 0,
-    fontSize: "28px",
+    fontSize: 28,
+    fontWeight: 900,
   },
   subtitle: {
     margin: "6px 0 0",
     color: "#6b7280",
   },
+  headerTotals: {
+    minWidth: 140,
+    textAlign: "right",
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  refreshButton: {
+    border: "1px solid #d1d5db",
+    borderRadius: 8,
+    padding: "10px 14px",
+    background: "white",
+    color: "#111827",
+    fontWeight: 800,
+    cursor: "pointer",
+  },
+  headerTotalLabel: {
+    display: "block",
+    color: "#6b7280",
+    fontSize: 12,
+    fontWeight: 800,
+    textTransform: "uppercase",
+  },
+  headerTotal: {
+    display: "block",
+    marginTop: 4,
+    fontSize: 26,
+    fontWeight: 900,
+  },
   grid: {
     display: "grid",
-    gridTemplateColumns: "0.8fr 1.2fr",
-    gap: "20px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+    gap: 18,
+    alignItems: "start",
   },
   panel: {
-    background: "#ffffff",
     border: "1px solid #e5e7eb",
-    borderRadius: "18px",
-    padding: "20px",
-    minHeight: "560px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "18px",
+    borderRadius: 8,
+    padding: 16,
+    background: "#f9fafb",
+    minHeight: 320,
   },
   panelHeader: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 14,
   },
   panelTitle: {
     margin: 0,
-    fontSize: "22px",
+    fontSize: 18,
   },
-  emptyState: {
-    border: "1px dashed #d1d5db",
-    borderRadius: "14px",
-    padding: "18px",
+  panelHint: {
+    margin: "4px 0 0",
     color: "#6b7280",
-    background: "#f9fafb",
+    fontSize: 13,
   },
-  list: {
+  badge: {
+    background: "#111827",
+    color: "white",
+    borderRadius: 999,
+    padding: "4px 10px",
+    fontSize: 12,
+    fontWeight: 800,
+  },
+  itemList: {
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
+    gap: 10,
+    height: 560,
     overflowY: "auto",
-    maxHeight: "420px",
-    paddingRight: "6px",
+    paddingRight: 6,
   },
-  itemCard: {
+  empty: {
+    color: "#6b7280",
+    fontStyle: "italic",
+    margin: 0,
+  },
+  itemRow: {
     display: "flex",
-    justifyContent: "space-between",
-    gap: "12px",
-    padding: "14px",
-    borderRadius: "14px",
+    flexDirection: "column",
+    gap: 12,
+    padding: 12,
+    borderRadius: 8,
+    background: "white",
     border: "1px solid #e5e7eb",
-    background: "#f9fafb",
   },
-  itemContent: {
+  itemRowTop: {
     display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  itemTitleRow: {
-    display: "flex",
-    alignItems: "center",
     justifyContent: "space-between",
-    gap: "12px",
-  },
-  kitchenCheck: {
-    width: "24px",
-    height: "24px",
-    minWidth: "24px",
-    borderRadius: "999px",
-    border: "1px solid #cbd5e1",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: "14px",
-    fontWeight: 700,
-    color: "transparent",
-    background: "#ffffff",
-  },
-  kitchenCheckActive: {
-    background: "#dcfce7",
-    borderColor: "#86efac",
-    color: "#166534",
-  },
-  itemCardFinished: {
-    borderColor: "#bbf7d0",
-    background: "#f0fdf4",
-  },
-  itemName: {
-    margin: 0,
-    fontSize: "17px",
-  },
-  itemMeta: {
-    margin: 0,
-    color: "#4b5563",
-    fontSize: "14px",
-  },
-  timeText: {
-    margin: 0,
-    color: "#2563eb",
-    fontSize: "12px",
-    fontWeight: 700,
-  },
-  modifierList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "4px",
-  },
-  modifierText: {
-    margin: 0,
-    fontSize: "13px",
-    color: "#4b5563",
-  },
-  itemActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
+    gap: 12,
     flexWrap: "wrap",
   },
-  qtyText: {
-    minWidth: "20px",
-    textAlign: "center",
-    fontWeight: 700,
+  itemMain: {
+    minWidth: 0,
   },
-  smallButton: {
-    width: "32px",
-    height: "32px",
-    borderRadius: "8px",
+  itemTopLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  itemName: {
+    overflowWrap: "anywhere",
+  },
+  pendingPill: {
+    background: "#fef3c7",
+    color: "#92400e",
+    borderRadius: 999,
+    padding: "3px 8px",
+    fontSize: 11,
+    fontWeight: 900,
+  },
+  preparingPill: {
+    background: "#dbeafe",
+    color: "#1d4ed8",
+    borderRadius: 999,
+    padding: "3px 8px",
+    fontSize: 11,
+    fontWeight: 900,
+  },
+  finishedPill: {
+    background: "#dcfce7",
+    color: "#166534",
+    borderRadius: 999,
+    padding: "3px 8px",
+    fontSize: 11,
+    fontWeight: 900,
+  },
+  itemMeta: {
+    marginTop: 5,
+    color: "#6b7280",
+    fontSize: 13,
+  },
+  itemRight: {
+    textAlign: "right",
+    flexShrink: 0,
+    marginLeft: "auto",
+  },
+  qtyControls: {
+    display: "flex",
+    gap: 6,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    flexWrap: "wrap",
+    marginTop: 8,
+  },
+  qtyButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     border: "1px solid #d1d5db",
-    background: "#ffffff",
+    background: "white",
     cursor: "pointer",
-    fontWeight: 700,
+    fontWeight: 900,
   },
-  plusButton: {
-    width: "32px",
-    height: "32px",
-    borderRadius: "8px",
-    border: "none",
-    background: "#111827",
-    color: "#ffffff",
-    cursor: "pointer",
-    fontWeight: 700,
-    fontSize: "18px",
-    lineHeight: 1,
+  qty: {
+    minWidth: 22,
+    textAlign: "center",
+    fontWeight: 800,
   },
   removeButton: {
     border: "none",
-    background: "#dc2626",
-    color: "#ffffff",
-    padding: "8px 12px",
-    borderRadius: "8px",
+    background: "#fee2e2",
+    color: "#991b1b",
+    borderRadius: 8,
+    padding: "7px 9px",
     cursor: "pointer",
-    fontWeight: 600,
+    fontWeight: 800,
   },
-  summaryBox: {
-    marginTop: "auto",
-    paddingTop: "20px",
+  noteButton: {
+    border: "1px solid #d1d5db",
+    background: "#f9fafb",
+    color: "#111827",
+    borderRadius: 8,
+    padding: "7px 9px",
+    cursor: "pointer",
+    fontWeight: 800,
+  },
+  notesPanel: {
     borderTop: "1px solid #e5e7eb",
-    display: "flex",
-    flexDirection: "column",
-    gap: "12px",
+    paddingTop: 10,
+    display: "grid",
+    gap: 8,
   },
-  summaryRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    fontSize: "16px",
-    gap: "12px",
+  emptyNote: {
+    margin: 0,
+    color: "#6b7280",
+    fontSize: 13,
+    fontStyle: "italic",
+  },
+  noteRow: {
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) 90px auto auto",
+    gap: 8,
+    alignItems: "center",
+  },
+  noteInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "9px 10px",
+    borderRadius: 8,
+    border: "1px solid #d1d5db",
+  },
+  notePriceInput: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "9px 10px",
+    borderRadius: 8,
+    border: "1px solid #d1d5db",
+  },
+  noteSaveButton: {
+    border: "none",
+    background: "#111827",
+    color: "white",
+    borderRadius: 8,
+    padding: "9px 10px",
+    cursor: "pointer",
+    fontWeight: 800,
+  },
+  noteDeleteButton: {
+    border: "none",
+    background: "#fee2e2",
+    color: "#991b1b",
+    borderRadius: 8,
+    padding: "9px 10px",
+    cursor: "pointer",
+    fontWeight: 800,
   },
   sendButton: {
+    marginTop: 14,
+    width: "100%",
+    padding: "12px 14px",
     border: "none",
-    borderRadius: "10px",
-    background: "#111827",
-    color: "#ffffff",
-    padding: "10px 16px",
+    borderRadius: 8,
+    background: "#2563eb",
+    color: "white",
+    fontWeight: 900,
     cursor: "pointer",
-    fontWeight: 700,
   },
-  checkoutButtonWrap: {
-    marginTop: "12px",
+  summary: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    padding: 18,
+    background: "#ffffff",
+    boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
+  },
+  summaryTitle: {
+    margin: 0,
+    fontSize: 18,
+  },
+  label: {
+    display: "block",
+    fontWeight: 800,
+    margin: "12px 0 6px",
+  },
+  input: {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "11px 12px",
+    borderRadius: 8,
+    border: "1px solid #d1d5db",
+  },
+  totalBox: {
+    marginTop: 18,
+    borderTop: "1px solid #e5e7eb",
+    paddingTop: 14,
+  },
+  totalLine: {
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 10,
+    color: "#374151",
+  },
+  grandTotal: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    fontSize: 22,
+    fontWeight: 900,
+    marginTop: 14,
+    paddingTop: 14,
+    borderTop: "1px solid #e5e7eb",
   },
   checkoutButton: {
+    width: "100%",
+    marginTop: 18,
+    padding: "14px 18px",
+    background: "#111827",
+    color: "white",
     border: "none",
-    borderRadius: "12px",
-    background: "linear-gradient(135deg, #1d4ed8, #0f172a)",
-    color: "#ffffff",
-    padding: "12px 18px",
+    borderRadius: 8,
+    fontWeight: 900,
     cursor: "pointer",
-    fontWeight: 700,
-    alignSelf: "flex-end",
-    boxShadow: "0 10px 20px rgba(29, 78, 216, 0.22)",
-  },
-  sendButtonDisabled: {
-    opacity: 0.5,
-    cursor: "not-allowed",
   },
   overlay: {
     position: "fixed",
     inset: 0,
-    background: "rgba(17, 24, 39, 0.45)",
+    background: "rgba(0,0,0,0.45)",
     display: "grid",
     placeItems: "center",
-    zIndex: 1000,
-    padding: "20px",
-  },
-  timeToggleButton: {
-    border: "1px solid #e5e7eb",
-    background: "linear-gradient(135deg, #ffffff, #f3f4f6)",
-    color: "#374151",
-    padding: "10px 16px",
-    borderRadius: "999px",
-    cursor: "pointer",
-    fontWeight: 700,
-    whiteSpace: "nowrap",
-    display: "flex",
-    alignItems: "center",
-    gap: "6px",
-    boxShadow: "0 4px 10px rgba(0,0,0,0.05)",
-    transition: "all 0.2s ease",
-  },
-  timeToggleButtonActive: {
-    background: "linear-gradient(135deg, #2563eb, #1d4ed8)",
-    color: "#ffffff",
-    border: "1px solid #1d4ed8",
-    boxShadow: "0 8px 20px rgba(37, 99, 235, 0.25)",
+    zIndex: 9999,
+    padding: 24,
   },
   checkoutModal: {
-    width: "100%",
-    maxWidth: "610px",
-    background: "#ffffff",
-    borderRadius: "20px",
-    padding: "24px",
+    width: 820,
+    maxWidth: "calc(100vw - 48px)",
+    maxHeight: "88vh",
+    overflow: "hidden",
+    background: "white",
+    borderRadius: 10,
+    boxShadow: "0 24px 70px rgba(0,0,0,0.25)",
     display: "flex",
     flexDirection: "column",
-    gap: "18px",
-    boxShadow: "0 24px 64px rgba(0, 0, 0, 0.16)",
   },
   modalHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    gap: "12px",
+    gap: 16,
+    padding: "22px 24px",
+    borderBottom: "1px solid #e5e7eb",
+    background: "#f9fafb",
   },
   modalTitle: {
     margin: 0,
-    fontSize: "26px",
+    fontSize: 24,
+    fontWeight: 900,
+    color: "#111827",
   },
   modalSubtitle: {
     margin: "6px 0 0",
     color: "#6b7280",
+    fontWeight: 800,
   },
-  closeButton: {
-    border: "none",
-    background: "transparent",
-    fontSize: "28px",
+  modalCloseButton: {
+    border: "1px solid #d1d5db",
+    background: "white",
+    color: "#111827",
+    borderRadius: 8,
+    width: 36,
+    height: 36,
+    cursor: "pointer",
+    fontSize: 22,
     lineHeight: 1,
-    cursor: "pointer",
+    fontWeight: 800,
   },
-  sectionBlock: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
+  checkoutContent: {
+    padding: 20,
+    overflowY: "auto",
+    display: "grid",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+    gap: 14,
   },
-  sectionLabel: {
-    fontWeight: 700,
-    color: "#374151",
-    fontSize: "15px",
+  checkoutPanel: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 8,
+    padding: 16,
+    background: "white",
   },
-  choiceRow: {
+  checkoutPanelTitle: {
+    margin: "0 0 14px",
+    fontSize: 17,
+    fontWeight: 900,
+  },
+  segmentedControl: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "10px",
+    gap: 8,
+    marginBottom: 16,
   },
-  choiceGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-    gap: "10px",
-  },
-  choiceGridFive: {
-    display: "grid",
-    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-    gap: "10px",
-  },
-  choiceButton: {
+  segmentButton: {
     border: "1px solid #d1d5db",
-    background: "#ffffff",
-    borderRadius: "12px",
-    padding: "12px 14px",
-    cursor: "pointer",
-    fontWeight: 700,
+    background: "#f9fafb",
     color: "#111827",
+    padding: "12px 14px",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: 900,
   },
-  choiceButtonActive: {
+  segmentButtonActive: {
+    border: "1px solid #111827",
     background: "#111827",
-    color: "#ffffff",
-    borderColor: "#111827",
-    boxShadow: "0 8px 20px rgba(17, 24, 39, 0.18)",
+    color: "white",
   },
-  formGrid: {
+  cardTypeGrid: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "14px",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
   },
-  fieldGroup: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px",
-  },
-  fieldLabel: {
-    fontWeight: 600,
-    color: "#374151",
-  },
-  input: {
-    padding: "12px 14px",
-    borderRadius: "12px",
+  cardTypeButton: {
     border: "1px solid #d1d5db",
-    fontSize: "15px",
-  },
-  readOnlyValue: {
-    padding: "12px 14px",
-    borderRadius: "12px",
-    border: "1px solid #e5e7eb",
-    fontSize: "15px",
     background: "#f9fafb",
     color: "#111827",
-    minHeight: "48px",
-    display: "flex",
-    alignItems: "center",
-    fontWeight: 700,
-  },
-  shortcutButton: {
-    border: "1px solid #d1d5db",
-    background: "#f9fafb",
-    borderRadius: "12px",
     padding: "12px 14px",
+    borderRadius: 8,
     cursor: "pointer",
-    fontWeight: 700,
-    color: "#111827",
+    fontWeight: 800,
   },
-  checkoutSummary: {
-    border: "1px solid #e5e7eb",
-    borderRadius: "14px",
-    padding: "16px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
+  cardTypeButtonActive: {
+    border: "1px solid #111827",
+    background: "#111827",
+    color: "white",
+  },
+  cashShortcutGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: 10,
+    marginTop: 12,
+  },
+  cashShortcutButton: {
+    border: "1px solid #d1d5db",
     background: "#f9fafb",
+    color: "#111827",
+    padding: "12px 14px",
+    borderRadius: 8,
+    cursor: "pointer",
+    fontWeight: 900,
+    fontSize: 16,
   },
-  modalFooter: {
+  changeLine: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 14,
+    paddingTop: 14,
+    borderTop: "1px solid #e5e7eb",
+    color: "#166534",
+    fontSize: 18,
+    fontWeight: 900,
+  },
+  checkoutWarning: {
+    margin: "0 20px 14px",
+    padding: "10px 12px",
+    borderRadius: 8,
+    background: "#fee2e2",
+    color: "#991b1b",
+    fontWeight: 800,
+  },
+  modalActions: {
     display: "flex",
     justifyContent: "flex-end",
-    gap: "10px",
+    gap: 10,
+    padding: "16px 20px",
+    borderTop: "1px solid #e5e7eb",
+    background: "#f9fafb",
   },
   secondaryButton: {
     border: "1px solid #d1d5db",
-    background: "#ffffff",
-    borderRadius: "10px",
-    padding: "10px 14px",
+    background: "white",
+    color: "#111827",
+    padding: "12px 16px",
+    borderRadius: 8,
     cursor: "pointer",
-    fontWeight: 600,
-  },
-  printButton: {
-    border: "1px solid #cbd5e1",
-    background: "#eff6ff",
-    color: "#1d4ed8",
-    borderRadius: "10px",
-    padding: "10px 14px",
-    cursor: "pointer",
-    fontWeight: 700,
+    fontWeight: 800,
   },
   primaryButton: {
     border: "none",
     background: "#111827",
-    color: "#ffffff",
-    borderRadius: "10px",
-    padding: "10px 14px",
+    color: "white",
+    padding: "12px 18px",
+    borderRadius: 8,
     cursor: "pointer",
-    fontWeight: 700,
-  },
-
-  modifierInlineWrap: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-    marginTop: "4px",
-  },
-  modifierInline: {
-    fontSize: "13px",
-    color: "#374151",
-    fontWeight: 600,
-    display: "flex",
-    alignItems: "center",
-    gap: "4px",
-  },
-  modAdd: {
-    color: "#16a34a",
     fontWeight: 900,
+    minWidth: 170,
   },
-  modNo: {
-    color: "#dc2626",
-    fontWeight: 900,
+  disabledButton: {
+    opacity: 0.5,
+    cursor: "not-allowed",
   },
-  modSwitch: {
-    color: "#eab308",
-    fontWeight: 900,
-  },
-
 };
 
 export default CartSection;

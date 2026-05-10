@@ -1,6 +1,7 @@
 package com.jie.restaurant_pos.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.jie.restaurant_pos.enums.*;
 import jakarta.persistence.*;
 import lombok.Getter;
@@ -25,8 +26,13 @@ public class Order {
     private BigDecimal tax;
     private BigDecimal total;
 
+    @JsonProperty("username")
     private String usernameSnapshot;
+    @JsonProperty("handlerName")
     private String handlerNameSnapshot;
+
+    @Column(name = "table_name_snapshot")
+    private String tableNameSnapshot;
 
     @Enumerated(EnumType.STRING)
     private OrderType orderType;

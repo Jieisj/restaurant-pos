@@ -1,80 +1,102 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { login } from "../api/authApi";
 
-function LoginPage() {
-  const navigate = useNavigate();
+function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState("alex");
+  const [password, setPassword] = useState("1234");
+  const [error, setError] = useState("");
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  const handleSubmit = (e) => {
+  async function handleSubmit(e) {
     e.preventDefault();
 
-    // temporary login
-    if (email && password) {
-      navigate("/");
+    try {
+      const data = await login(username, password);
+
+      sessionStorage.setItem("token", data.token);
+      sessionStorage.setItem("userId", data.id);
+      sessionStorage.setItem("username", data.username);
+      sessionStorage.setItem("role", data.role);
+      if (data.tableId) {
+        sessionStorage.setItem("tableId", data.tableId);
+        sessionStorage.setItem("tableLabel", data.tableLabel || "");
+        sessionStorage.setItem("tableSeat", data.tableSeat || "");
+      } else {
+        sessionStorage.removeItem("tableId");
+        sessionStorage.removeItem("tableLabel");
+        sessionStorage.removeItem("tableSeat");
+      }
+      onLogin(data);
+    } catch (err) {
+      console.error(err);
+      setError("Login failed");
     }
-  };
+  }
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
+    <div style={styles.page}>
+      <form onSubmit={handleSubmit} style={styles.card}>
         <h1>Restaurant POS</h1>
         <p>Login to continue</p>
 
-        <form onSubmit={handleSubmit} style={styles.form}>
-          <input
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={styles.input}
-          />
+        {error && <div style={styles.error}>{error}</div>}
 
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={styles.input}
-          />
+        <input
+          placeholder="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          style={styles.input}
+        />
 
-          <button style={styles.button}>Login</button>
-        </form>
-      </div>
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={styles.input}
+        />
+
+        <button type="submit" style={styles.button}>
+          Login
+        </button>
+      </form>
     </div>
   );
 }
 
 const styles = {
-  container: {
-    height: "100vh",
+  page: {
+    minHeight: "100vh",
     display: "grid",
     placeItems: "center",
-    background: "#f4f6f8",
+    background: "#f3f4f6",
   },
   card: {
+    width: 360,
     background: "white",
-    padding: "40px",
-    borderRadius: "10px",
-    width: "350px",
-  },
-  form: {
+    padding: 32,
+    borderRadius: 14,
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
-    marginTop: "20px",
+    gap: 12,
   },
   input: {
-    padding: "10px",
-    borderRadius: "6px",
-    border: "1px solid #ddd",
+    padding: 12,
+    borderRadius: 8,
+    border: "1px solid #ccc",
   },
   button: {
-    padding: "10px",
+    padding: 12,
+    borderRadius: 8,
+    border: "none",
     background: "black",
     color: "white",
-    border: "none",
-    borderRadius: "6px",
+    fontWeight: 700,
+  },
+  error: {
+    color: "white",
+    background: "#dc2626",
+    padding: 10,
+    borderRadius: 8,
   },
 };
 

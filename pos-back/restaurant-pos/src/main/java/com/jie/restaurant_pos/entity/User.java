@@ -27,6 +27,10 @@ public class User {
     @Enumerated(EnumType.STRING)
     private Role role;
 
+    @ManyToOne
+    @JoinColumn(name = "table_id")
+    private RestaurantTable table;
+
     @Column(insertable = false)
     private LocalDateTime createdAt;
 }

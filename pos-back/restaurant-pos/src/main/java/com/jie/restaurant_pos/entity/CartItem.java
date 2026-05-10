@@ -8,6 +8,8 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "cart_items")
@@ -19,7 +21,7 @@ public class CartItem {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "order_id", nullable = false, insertable = false, updatable = false)
     @JsonIgnore
     private Order order;
@@ -27,7 +29,7 @@ public class CartItem {
     @Column(name = "order_id")
     private Long orderId;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "menu_item_id", nullable = false, insertable = false, updatable = false)
     @JsonIgnore
     private MenuItem menuItem;
@@ -43,14 +45,22 @@ public class CartItem {
     @JsonProperty("price")
     private BigDecimal priceSnapshot;
 
+    @OneToMany(
+            mappedBy = "cartItem",
+            cascade = CascadeType.ALL,
+            orphanRemoval = true,
+            fetch = FetchType.EAGER
+    )
+    private List<CartItemNote> notes = new ArrayList<>();
+
     @Column(nullable = false)
-    private Integer quantity = 1;
+    private Integer quantity;
 
     @Column(name = "is_pending", nullable = false)
-    private Byte isPending = 1;
+    private Byte isPending;
 
     @Column(name = "is_finished", nullable = false)
-    private Byte isFinished = 0;
+    private Byte isFinished;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -65,6 +75,15 @@ public class CartItem {
     protected void onCreate() {
         if (createdAt == null) {
             createdAt = LocalDateTime.now();
+        }
+        if (quantity == null) {
+            quantity = 1;
+        }
+        if (isPending == null) {
+            isPending = 1;
+        }
+        if (isFinished == null) {
+            isFinished = 0;
         }
     }
 }

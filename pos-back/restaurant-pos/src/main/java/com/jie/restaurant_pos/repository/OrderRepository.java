@@ -7,32 +7,21 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 
 public interface OrderRepository extends JpaRepository<Order, Long> {
-    Optional<Order> findByTableIdAndOrderStatus(
-            Long tableId,
-            OrderStatus orderStatus
-    );
+    List<Order> findByCreatedAtGreaterThanEqualAndCreatedAtLessThanAndOrderStatusAndOrderType(LocalDateTime start, LocalDateTime end, OrderStatus status, OrderType type);
 
-    List<Order> findByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
+    List<Order> findByCreatedAtGreaterThanEqualAndCreatedAtLessThanAndOrderStatus(LocalDateTime start, LocalDateTime end, OrderStatus status);
 
-    List<Order> findByOrderStatusAndCreatedAtBetween(
-            OrderStatus orderStatus,
-            LocalDateTime start,
-            LocalDateTime end
-    );
+    List<Order> findByCreatedAtGreaterThanEqualAndCreatedAtLessThanAndOrderType(LocalDateTime start, LocalDateTime end, OrderType type);
 
-    List<Order> findByOrderTypeAndCreatedAtBetween(
-            OrderType orderType,
-            LocalDateTime start,
-            LocalDateTime end
-    );
+    List<Order> findByCreatedAtGreaterThanEqualAndCreatedAtLessThan(LocalDateTime start, LocalDateTime end);
 
-    List<Order> findByOrderTypeAndOrderStatusAndCreatedAtBetween(
-            OrderType orderType,
-            OrderStatus orderStatus,
-            LocalDateTime start,
-            LocalDateTime end
-    );
+    List<Order> findByOrderStatusAndOrderType(OrderStatus status, OrderType type);
+
+    List<Order> findByOrderStatus(OrderStatus status);
+
+    List<Order> findByOrderType(OrderType type);
+
+    List<Order> findByTableIdAndOrderStatusOrderByIdDesc(Long tableId, OrderStatus orderStatus);
 }
