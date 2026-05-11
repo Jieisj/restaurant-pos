@@ -1,7 +1,5 @@
 # Restaurant POS Backend API List
 
-Generated: May 09, 2026
-
 Base URL: `http://localhost:8080`
 
 Authentication: use `Authorization: Bearer <token>` after `POST /api/auth/login`.
